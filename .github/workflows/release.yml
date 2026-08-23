@@ -1,0 +1,124 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*-*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Release checks
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Install the build floor
+        run: |
+          pacman -Syu --needed --noconfirm \
+            git pkgconf rust gtk4 libadwaita gtk4-layer-shell librsvg nodejs npm
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Check tag and version
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+          test "$GITHUB_REF_NAME" = "v$version"
+          grep -Fq "<release version=\"$version\"" \
+            data/io.github.Jamelade.Jamelade.metainfo.xml
+
+      - name: Test source
+        run: make check
+
+  package:
+    name: Build and publish Flatpak
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Flatpak tooling
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes \
+            appstream desktop-file-utils flatpak flatpak-builder jq
+          flatpak remote-add --user --if-not-exists flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user --noninteractive --yes flathub \
+            org.gnome.Platform//49 \
+            org.gnome.Sdk//49 \
+            org.freedesktop.Sdk.Extension.rust-stable//25.08 \
+            org.electronjs.Electron2.BaseApp//25.08
+
+      - name: Build release candidate
+        env:
+          RELEASE_SKIP_SOURCE_CHECKS: "1"
+        run: ./scripts/release-check.sh
+
+      - name: Verify release assets
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum --check SHA256SUMS
+          test "$(find . -maxdepth 1 -name '*.flatpak' | wc -l)" -eq 1
+          test "$(find . -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 1
+
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=${GITHUB_REF_NAME#v}
+          notes="$RUNNER_TEMP/release-notes.md"
+          cat >"$notes" <<EOF
+          Jamelade's first public beta packages the privacy-reviewed release
+          source as one cross-distribution x86_64 Flatpak.
+
+          ### Install
+
+          Download \`Jamelade-${version}-x86_64.flatpak\` and \`SHA256SUMS\`,
+          place them in the same directory, then run:
+
+          \`\`\`bash
+          sha256sum --ignore-missing -c SHA256SUMS
+          flatpak install --user ./Jamelade-${version}-x86_64.flatpak
+          \`\`\`
+
+          ### Requirements and limitations
+
+          - x86_64 Linux with Flatpak
+          - an active Apple Music subscription and network connection
+          - Widevine downloads on first use; offline playback is unavailable
+          - this is an unsigned prerelease for testing
+
+          Jamelade is unofficial and is not affiliated with or endorsed by
+          Apple Inc. See the bundled privacy and legal notices before signing in.
+          EOF
+
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --draft \
+            --prerelease \
+            --title "Jamelade ${version}" \
+            --notes-file "$notes"
+          gh release upload "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY"
+          gh release edit "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft=false

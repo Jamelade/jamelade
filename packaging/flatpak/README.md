@@ -3,8 +3,8 @@
 Jamelade needs libadwaita ≥ 1.8 and GTK ≥ 4.20. The Flatpak carries the GNOME
 49 runtime, so systems with older desktop libraries can still run it.
 
-Jamelade is **not currently submitted to Flathub**. This builds a bundle you
-install yourself or obtain from a project release.
+Jamelade is **not currently submitted to Flathub**. Public beta releases ship
+as standalone Flatpak bundles; these targets produce the same format locally.
 
 ```bash
 make flatpak          # build and install locally

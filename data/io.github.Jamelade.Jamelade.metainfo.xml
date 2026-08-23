@@ -45,9 +45,9 @@
     <internet>always</internet>
   </requires>
   <releases>
-    <release version="0.10.0-dev" date="2026-08-21">
+    <release version="0.10.0-beta.1" date="2026-08-23">
       <description>
-        <p>Introduces the Jamelade identity, selectable animated Jamkin companions, matching themes and optional hover lyrics on the desktop.</p>
+        <p>First public beta with Apple Music Home, synchronized lyrics, album-aware glass, optional Discord activity, and selectable animated Jamkin companions.</p>
       </description>
     </release>
   </releases>

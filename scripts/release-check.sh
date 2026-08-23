@@ -7,6 +7,7 @@
 # RELEASE_ALLOW_DEV=1 permits the current -dev version for a local candidate.
 # RELEASE_ALLOW_DIRTY=1 exists only for throwaway diagnostics: the source
 # archive still comes from HEAD, so never publish an artefact made that way.
+# RELEASE_SKIP_SOURCE_CHECKS=1 is reserved for CI after its isolated check job.
 # REPRO_CHECK=1 repeats the complete Flatpak build in a fresh directory and
 # refuses a byte-different unsigned bundle.
 # FLATPAK_GPG_KEY=<id> signs the exported Flatpak commit when a maintained
@@ -69,7 +70,9 @@ if [[ "${REPRO_CHECK:-0}" == 1 && -n "${FLATPAK_GPG_KEY:-}" ]]; then
 fi
 
 git diff --check
-make check
+if [[ "${RELEASE_SKIP_SOURCE_CHECKS:-0}" != 1 ]]; then
+    make check
+fi
 desktop-file-validate \
     data/io.github.Jamelade.Jamelade.desktop \
     data/io.github.Jamelade.Jamelade.Launcher.desktop

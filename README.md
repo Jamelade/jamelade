@@ -111,26 +111,30 @@ advertising SDK, or Jamelade account.
 
 ## Install
 
-Jamelade is currently a source-first public beta, not a signed stable release.
-Until a signed release is available, the recommended testing route is a local
-Flatpak bundle:
+Jamelade's public beta is distributed as an **x86_64 Flatpak**. Download the
+bundle and `SHA256SUMS` from the
+[beta release](https://github.com/Jamelade/jamelade/releases/tag/v0.10.0-beta.1),
+then run:
 
 ```bash
-make flatpak-bundle
-flatpak install --user --reinstall ./Jamelade.flatpak
+sha256sum --ignore-missing -c SHA256SUMS
+flatpak install --user ./Jamelade-0.10.0-beta.1-x86_64.flatpak
 ```
 
-Launch **Jamelade** from the desktop's app grid after installation.
+The bundle records Flathub as the source for its GNOME runtime. Ubuntu and
+Debian users may need to install Flatpak first. Launch **Jamelade** from the
+desktop's app grid after installation.
 
 The first installation may fetch the GNOME 49 runtime. Building also downloads
-the roughly 200 MB castLabs Electron playback sidecar.
+the roughly 200 MB castLabs Electron playback sidecar; the release bundle
+already contains that sidecar, while Widevine downloads on first use.
 
-For a non-Flatpak development install, the project needs Rust 1.93 or newer,
+To build from source instead, the project needs Rust 1.93 or newer,
 GTK 4.20 or newer, libadwaita 1.8 or newer, Node.js, npm, and the development
 packages listed by your distribution:
 
 ```bash
-make install
+make flatpak-bundle
 ```
 
 ### Requirements

@@ -1,6 +1,6 @@
 [package]
 name = "jamelade"
-version = "0.10.0-dev"
+version = "0.10.0-beta.1"
 edition = "2024"
 description = "A native Linux desktop client for Apple Music"
 license = "GPL-3.0-or-later"
