@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.Jamelade.Jamelade</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Jamelade</name>
+  <summary>Native Apple Music client for the Linux desktop</summary>
+
+  <description>
+    <p>
+      Jamelade presents Apple Music as a native GTK application while keeping
+      the web engine hidden and restricted to MusicKit playback and sign-in.
+    </p>
+    <p>It includes:</p>
+    <ul>
+      <li>songs, albums, artists, playlists and catalogue search</li>
+      <li>personal recommendations, radio stations, listening history and storefront charts</li>
+      <li>optional lyrics with separate privacy opt-ins for each third-party source</li>
+      <li>three local Jamkin companions with matching accessible colour themes and optional playback animation</li>
+      <li>a resizable movable Desktop Jamkin with uncluttered synchronized lyrics on hover</li>
+      <li>selectable Jamkin launcher tiles confirmed and installed by the desktop portal</li>
+      <li>MPRIS controls for Plasma, GNOME and other Linux desktops</li>
+    </ul>
+    <p>An active Apple Music subscription and an internet connection are required.</p>
+    <p>Jamelade is an unofficial community fork of Slipmat. It is not affiliated with, endorsed by, or approved by Apple Inc., and Apple can change or block the web service it relies on.</p>
+    <p>Apple and Apple Music are trademarks of Apple Inc., registered in the U.S. and other countries.</p>
+  </description>
+
+  <launchable type="desktop-id">io.github.Jamelade.Jamelade.Launcher.desktop</launchable>
+  <provides>
+    <binary>jamelade</binary>
+  </provides>
+  <developer id="io.github.jamelade">
+    <name>Jamelade contributors</name>
+  </developer>
+  <url type="homepage">https://github.com/Jamelade/jamelade</url>
+  <url type="bugtracker">https://github.com/Jamelade/jamelade/issues</url>
+  <content_rating type="oars-1.1"/>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>touch</control>
+  </supports>
+  <requires>
+    <internet>always</internet>
+  </requires>
+  <releases>
+    <release version="0.10.0-dev" date="2026-08-21">
+      <description>
+        <p>Introduces the Jamelade identity, selectable animated Jamkin companions, matching themes and optional hover lyrics on the desktop.</p>
+      </description>
+    </release>
+  </releases>
+</component>

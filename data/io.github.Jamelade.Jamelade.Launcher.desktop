@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Jamelade
+GenericName=Music Player
+Comment=Play your Apple Music library natively on Linux
+Exec=jamelade
+Icon=io.github.Jamelade.Jamelade
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=Music;Apple;Player;Audio;Playlist;Streaming;
+StartupNotify=true
+# Stable sub-id owned by the Dynamic Launcher portal. Jamelade can replace
+# this one entry after a desktop-controlled confirmation without filesystem
+# access to any other launcher.
+StartupWMClass=io.github.Jamelade.Jamelade.Launcher

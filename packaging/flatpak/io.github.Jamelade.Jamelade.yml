@@ -1,0 +1,196 @@
+# Jamelade as a Flatpak.
+#
+# Why this exists: the app needs libadwaita >= 1.8 and GTK >= 4.20 (relm4's
+# `gnome_49` feature), which almost nothing ships yet. A Flatpak carries the
+# GNOME 49 runtime with it, so the distro's own libadwaita stops mattering —
+# Ubuntu 24.04 and Fedora 42 can run this despite being unable to build it.
+#
+# Direct-distribution manifest. Jamelade is not currently submitted to Flathub.
+app-id: io.github.Jamelade.Jamelade
+runtime: org.gnome.Platform
+runtime-version: '49'
+sdk: org.gnome.Sdk
+
+# Chromium's own SUID sandbox cannot work inside Flatpak's. This base app
+# supplies zypak, which translates Chromium's sandbox calls into the ones
+# Flatpak allows. Measured without it: the sidecar aborts on
+# `chrome-sandbox is owned by root and has mode 4755` and rule 6 restarts it
+# for ever, which looks like a broken app rather than a packaging mistake.
+base: org.electronjs.Electron2.BaseApp
+base-version: '25.08'
+
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+
+command: jamelade
+
+finish-args:
+  # Always. Widevine has no persistent licences on Linux, so playback needs a
+  # connection every time — and the CDM itself is fetched on first run.
+  - --share=network
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  # Without this GTK falls back to software rendering and the grids scroll
+  # badly enough to read as an app bug. Measured: `egl: failed to create dri2
+  # screen`.
+  - --device=dri
+  # The encrypted Apple-cookie vault must reach GNOME Keyring. The sidecar
+  # checks the selected backend at runtime and becomes entirely memory-only if
+  # Secret Service is unavailable rather than storing Apple cookies weakly.
+  - --talk-name=org.freedesktop.secrets
+  # Flatpak's bus proxy only lets an app own names matching its ID, and
+  # `GtkApplication` exits 0 with no window if it cannot register. MPRIS needs
+  # its own name on top of that — it is the headline feature.
+  - --own-name=org.mpris.MediaPlayer2.Jamelade
+  # The visible desktop entry is a stable sub-launcher so the Dynamic Launcher
+  # portal can replace its Jamkin tile after an explicit confirmation.
+  - --own-name=io.github.Jamelade.Jamelade.Launcher
+  # Optional Discord Rich Presence uses only Discord's local IPC socket. These
+  # are the standard narrow grants for native Discord/Vesktop, Flathub Discord,
+  # and Flathub Vesktop respectively; the app does not inspect any other path
+  # and never probes a socket until the separately off-by-default preference is
+  # enabled.
+  - --filesystem=xdg-run/discord-ipc-0
+  - --filesystem=xdg-run/app/com.discordapp.Discord:create
+  - --filesystem=xdg-run/app/dev.vencord.Vesktop:create
+  # Jamelade keeps nothing of the user's outside its own directories: settings,
+  # the artwork cache, the session, and the CDM all live under the app's
+  # config and cache. So no home access at all.
+
+# Build-only layer-shell headers and its opt-in LD_PRELOAD compatibility shim
+# do not belong in the runtime. Jamelade links only the ordinary shared library.
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /lib/liblayer-shell-preload.so
+
+modules:
+  # A small, compositor-scoped Wayland protocol adapter for the explicitly
+  # optional Desktop Jamkin overlay. It adds no Flatpak permission and is a
+  # no-op on desktops that do not advertise layer-shell.
+  - name: gtk4-layer-shell
+    buildsystem: meson
+    config-opts:
+      - -Dexamples=false
+      - -Ddocs=false
+      - -Dtests=false
+      - -Dsmoke-tests=false
+      - -Dintrospection=false
+      - -Dvapi=false
+    sources:
+      - type: archive
+        url: https://github.com/wmww/gtk4-layer-shell/archive/refs/tags/v1.3.0.tar.gz
+        sha256: 1ebb01ab14e98afd1727f68f64981c37bd23305b1f131f5667c02b94cf593192
+
+  - name: jamelade
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin
+      env:
+        CARGO_HOME: /run/build/jamelade/cargo
+        # Fixed for this release line. Together with remapped Rust paths this
+        # keeps checkout time and flatpak-builder's temporary directory out of
+        # otherwise identical release binaries. Update deliberately for the
+        # next release rather than inheriting the builder's wall clock.
+        SOURCE_DATE_EPOCH: '1787356800'
+        CARGO_INCREMENTAL: '0'
+        RUSTFLAGS: '--remap-path-prefix=/run/build/jamelade=/usr/src/jamelade'
+        # Public Rich Presence identifier only. Discord client secrets and
+        # tokens are neither required nor permitted in the build.
+        JAMELADE_DISCORD_APPLICATION_ID: '1540479400980520981'
+    sources:
+      - type: dir
+        path: ../..
+        # Without these the build copies ~10GB of `target/` and the 313MB
+        # `node_modules` into the sandbox, neither of which it uses: the crates
+        # come from `cargo-sources.json` and Electron from the pinned archive.
+        skip:
+          - target
+          - sidecar/node_modules
+          - .git
+          - packaging/flatpak/.flatpak-builder
+          - build-dir
+          - flatpak-repo
+          - release-repo
+          - dist
+          - Jamelade.flatpak
+          - Jamelade-oled-lyrics-test.flatpak
+          - Slipmat.flatpak
+      # Crate tarballs with hashes, so the build needs no network.
+      # Regenerate with packaging/flatpak/generate-sources.sh
+      - cargo-sources.json
+
+      # castLabs Electron, pinned. Fetched here rather than by `npm install`
+      # for two reasons: `flatpak-builder` forbids network during a build, and
+      # nothing in the npm tree is needed at *runtime* — the app runs
+      # `node_modules/electron/dist/electron` directly, and the other thirteen
+      # packages exist only to download that binary.
+      - type: archive
+        url: https://github.com/castlabs/electron-releases/releases/download/v43.2.0%2Bwvcus/electron-v43.2.0+wvcus-linux-x64.zip
+        sha256: d69d7cb6d27651f51c106fec52c746097d064f95b2fee6966f9888e44e0cbf54
+        strip-components: 0
+        dest: electron-dist
+    build-commands:
+      - cargo --offline fetch --manifest-path Cargo.toml --verbose
+      - cargo --offline build --release --verbose
+      - install -Dm755 target/release/jamelade /app/bin/jamelade.real
+      - bash scripts/install-cargo-licenses.sh cargo/vendor
+          /app/share/licenses/io.github.Jamelade.Jamelade/rust-crates
+      - install -Dm644 LEGAL.md /app/share/doc/jamelade/LEGAL.md
+      - install -Dm644 PRIVACY.md /app/share/doc/jamelade/PRIVACY.md
+
+      # The sidecar, laid out exactly where `electron_binary()` looks:
+      # <sidecar>/node_modules/electron/dist/electron
+      - install -Dm644 sidecar/package.json /app/share/jamelade/sidecar/package.json
+      - install -Dm644 sidecar/main.js /app/share/jamelade/sidecar/main.js
+      - install -Dm644 sidecar/preload.js /app/share/jamelade/sidecar/preload.js
+      - install -Dm644 sidecar/page-hook.js /app/share/jamelade/sidecar/page-hook.js
+      - install -Dm644 sidecar/security.js /app/share/jamelade/sidecar/security.js
+      - install -Dm644 sidecar/auth-preload.js /app/share/jamelade/sidecar/auth-preload.js
+      - install -Dm644 sidecar/session-vault.js /app/share/jamelade/sidecar/session-vault.js
+      - mkdir -p /app/share/jamelade/sidecar/node_modules/electron/dist
+      - cp -a electron-dist/. /app/share/jamelade/sidecar/node_modules/electron/dist/
+      # zypak has to be the *direct* parent of Chromium, and Chromium is the
+      # app's grandchild — Rust spawns Electron. So the wrapper goes here,
+      # standing where `electron_binary()` looks, rather than around the app.
+      - mv /app/share/jamelade/sidecar/node_modules/electron/dist/electron
+          /app/share/jamelade/sidecar/node_modules/electron/dist/electron.bin
+      - chmod +x /app/share/jamelade/sidecar/node_modules/electron/dist/electron.bin
+      - install -Dm755 packaging/flatpak/electron-shim
+          /app/share/jamelade/sidecar/node_modules/electron/dist/electron
+
+      # zypak-wrapper is what makes Chromium's sandbox work in here. The
+      # launcher also points the app at the bundled sidecar, because
+      # `locate()` prefers $XDG_DATA_HOME and there is no install tree here.
+      - install -Dm755 jamelade-launcher /app/bin/jamelade
+
+      - install -Dm644 data/io.github.Jamelade.Jamelade.desktop /app/share/applications/io.github.Jamelade.Jamelade.desktop
+      - install -Dm644 data/io.github.Jamelade.Jamelade.Launcher.desktop /app/share/applications/io.github.Jamelade.Jamelade.Launcher.desktop
+      - install -Dm644 data/io.github.Jamelade.Jamelade.metainfo.xml
+          /app/share/metainfo/io.github.Jamelade.Jamelade.metainfo.xml
+      - install -Dm644 data/icons/hicolor/symbolic/apps/io.github.Jamelade.Jamelade-symbolic.svg
+          /app/share/icons/hicolor/symbolic/apps/io.github.Jamelade.Jamelade-symbolic.svg
+      - install -Dm644 data/icons/hicolor/16x16/apps/io.github.Jamelade.Jamelade.png /app/share/icons/hicolor/16x16/apps/io.github.Jamelade.Jamelade.png
+      - install -Dm644 data/icons/hicolor/24x24/apps/io.github.Jamelade.Jamelade.png /app/share/icons/hicolor/24x24/apps/io.github.Jamelade.Jamelade.png
+      - install -Dm644 data/icons/hicolor/32x32/apps/io.github.Jamelade.Jamelade.png /app/share/icons/hicolor/32x32/apps/io.github.Jamelade.Jamelade.png
+      - install -Dm644 data/icons/hicolor/48x48/apps/io.github.Jamelade.Jamelade.png /app/share/icons/hicolor/48x48/apps/io.github.Jamelade.Jamelade.png
+      - install -Dm644 data/icons/hicolor/64x64/apps/io.github.Jamelade.Jamelade.png /app/share/icons/hicolor/64x64/apps/io.github.Jamelade.Jamelade.png
+      - install -Dm644 data/icons/hicolor/128x128/apps/io.github.Jamelade.Jamelade.png /app/share/icons/hicolor/128x128/apps/io.github.Jamelade.Jamelade.png
+      - install -Dm644 data/icons/hicolor/256x256/apps/io.github.Jamelade.Jamelade.png /app/share/icons/hicolor/256x256/apps/io.github.Jamelade.Jamelade.png
+      - install -Dm644 data/icons/hicolor/512x512/apps/io.github.Jamelade.Jamelade.png /app/share/icons/hicolor/512x512/apps/io.github.Jamelade.Jamelade.png
+      - install -Dm644 data/companions/launcher/jambun.png /app/share/icons/hicolor/512x512/apps/io.github.Jamelade.Jamelade.jambun.png
+      - install -Dm644 data/companions/launcher/jampam.png /app/share/icons/hicolor/512x512/apps/io.github.Jamelade.Jamelade.jampam.png
+      - install -Dm644 data/companions/launcher/jamjoe.png /app/share/icons/hicolor/512x512/apps/io.github.Jamelade.Jamelade.jamjoe.png
+      - install -Dm644 data/companions/jambun.png /app/share/jamelade/companions/jambun.png
+      - install -Dm644 data/companions/jampam.png /app/share/jamelade/companions/jampam.png
+      - install -Dm644 data/companions/jamjoe.png /app/share/jamelade/companions/jamjoe.png
+      - mkdir -p /app/share/jamelade/companions/launcher
+      - cp -a data/companions/launcher/. /app/share/jamelade/companions/launcher/
+      - mkdir -p /app/share/jamelade/companions/animated
+      - cp -a data/companions/animated/jambun data/companions/animated/jampam
+          data/companions/animated/jamjoe /app/share/jamelade/companions/animated/
+      - mkdir -p /app/share/jamelade/companions/animated-hq
+      - cp -a data/companions/animated-hq/jambun data/companions/animated-hq/jampam
+          data/companions/animated-hq/jamjoe /app/share/jamelade/companions/animated-hq/

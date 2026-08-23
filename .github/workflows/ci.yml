@@ -1,0 +1,55 @@
+name: CI
+
+# Every push and every pull request. CI deliberately performs checks only: it
+# never grants an automated workflow permission to publish.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Keep the GitHub-provided token read-only for the whole workflow.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: fmt · clippy · tests · sizes
+    runs-on: ubuntu-latest
+    # **In a container, because the runner cannot build this.** Slipmat needs
+    # libadwaita >= 1.8 and GTK >= 4.20 (relm4's `gnome_49`), and
+    # `ubuntu-latest` ships neither. Arch is what the app is developed against
+    # and tracks both closely.
+    container: archlinux:base-devel
+    steps:
+      # Verified by running this exact list in a clean `archlinux:base-devel`
+      # container: rustc 1.97.1, GTK 4.22.4, libadwaita 1.9.2, `make check`
+      # green from scratch. No openssl — reqwest is built on rustls.
+      - name: Install the build floor
+        run: |
+          pacman -Syu --needed --noconfirm \
+            git pkgconf rust gtk4 libadwaita gtk4-layer-shell librsvg nodejs npm
+          rustc --version
+
+      # Pin third-party actions to reviewed commit IDs rather than mutable tags.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Cache cargo
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+
+      # `make check` is the project's own bar: the size ratchet, then fmt,
+      # clippy as an error, and the tests. Running the same target rather than
+      # its parts means CI cannot drift from what a developer runs.
+      - name: make check
+        run: make check

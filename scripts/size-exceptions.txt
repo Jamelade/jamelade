@@ -1,0 +1,423 @@
+# Files allowed past the 600-line budget in scripts/check-sizes.sh, with the
+# size each may reach. A file that grows past its number fails the check.
+#
+# These are the sizes on the day the budget was added. They are a ratchet, not
+# an endorsement: lowering a number as a file shrinks is welcome, raising one
+# needs to be a deliberate line in a diff.
+#
+# path                              max   why
+src/app/mod.rs                      3770  # the model, the messages, `view!` and both reducers.
+                                          # ARCHITECTURE.md says those three belong together and the
+                                          # reducer stays whole.
+                                          # 2910 -> 2760 for #78: 185 lines of `init` wiring moved to
+                                          # `wiring.rs`. Stateful menu actions, a breakpoint, a scroll
+                                          # handler, a property `view!` cannot set on a `#[local_ref]`
+                                          # — none of it the model, the messages or the reducer, which
+                                          # is the rule this file is meant to follow.
+                                          # 2760 -> 2800 across one branch, and that is the whole of
+                                          # the movement: four sidebar reload buttons became one in
+                                          # the header (~130 lines of `view!` for ~45), then the
+                                          # header learned to be narrow — a title/search stack, a
+                                          # toggle, and its own breakpoint.
+                                          # 2800 -> 2905: type-to-search and Ctrl+F — two flags, two
+                                          # messages, two reducer arms and a widget-sync pass. The
+                                          # second flag is the fix for a search the user could clear
+                                          # while it was hidden and find still typed in on widening.
+                                          # 2905 -> 2800 for #100: the sidebar's five rows were 129
+                                          # lines of `view!` saying one thing five times. They are a
+                                          # loop in `wiring.rs` over an array in `view.rs` now — beside
+                                          # the index contract they have to honour, which is what a
+                                          # comment on each row used to repeat.
+                                          # The debt this entry recorded is paid, and the number comes
+                                          # down for the fourth time.
+                                          # 2800 -> 2930 for the queue rewrite: two messages and their
+                                          # reducer arms for walking from a queue row to its album or
+                                          # artist page, and the four new queue outputs they map from.
+                                          # 2930 -> 2945: closing the drawer when that page is pushed.
+                                          # The queue lives inside a modal sheet, so a page pushed
+                                          # behind it is a click that appears to do nothing.
+                                          # 2995 -> 3055 for #133: `sidebar_rows` on the model, the
+                                          # four messages a sidebar click and the picker now post,
+                                          # the registries of pin labels and of the selection a
+                                          # rebuild has to restore, and keeping a destination page's
+                                          # sidebar toggle in step. `SectionChosen` came *out* —
+                                          # its work moved to `sidebar_row_activated`, which is the
+                                          # only place that can tell the pin button apart.
+                                          # 3055 -> 3070: `MovePin`, threading the sender to the
+                                          # sidebar rebuild so a redrawn pin row can be dragged, and
+                                          # syncing the pins on the command path too — the library
+                                          # load that prunes them arrives there, not in `update`.
+                                          # 3070 -> 3080: the tile menu's message and handover.
+                                          # 3080 -> 3085: `Timed` says what it is for now — it called
+                                          # itself temporary while ARCHITECTURE.md pointed at it as the way
+                                          # rebuild cost stays measured.
+                                          # 2945 -> 2995 for #120: the volume panel's overlay in
+                                          # `view!`, its three model fields, a message, two reducer
+                                          # arms and a fourth animated property. The panel itself is
+                                          # a sibling (`osd.rs`); what lands here is the model, the
+                                          # messages and the widget tree, which is what this file is
+                                          # for.
+                                          # Lowering a number as a file shrinks is the ratchet working;
+                                          # this is the third time it has gone down.
+                                          # 3085 -> 3095 for #145: `SetPlayerBackdrop` and its reducer
+                                          # arm. The model, the messages and the reducer — what this
+                                          # file is for.
+                                          # 3095 -> 3100 for #147: choosing the row `PlayPage` starts
+                                          # on. The choosing itself is in `queue.rs`, which owns
+                                          # resolving which row a click meant.
+                                          # 3100 -> 3110: MPRIS `Raise` — a message and a reducer arm
+                                          # that presents the window. It lands here rather than in
+                                          # `background.rs` beside the hide it undoes because the
+                                          # reducer is the only place holding the root window.
+                                          # 3110 -> 3115 for #152: the three enqueue sites each name
+                                          # the mode their queue starts in. The naming is the fix —
+                                          # a call site that says nothing is what let shuffle carry
+                                          # from one queue to the next.
+                                          # 3115 -> 3120 in the hardened fork: explicit sign-out now
+                                          # removes account-derived artwork as well as library state.
+                                          # 3120 -> 3270: Explore and Lyrics add model fields, messages,
+                                          # stack children and reducer arms. Fetching and widget work
+                                          # remains in discovery.rs and components rather than here.
+                                          # 3270 -> 3290: Jamelade adds one persisted companion message
+                                          # and its reducer arm; artwork and palette logic remain in
+                                          # their own modules.
+                                          # 3290 -> 3310: artwork results carry their originating
+                                          # template and two local RGB tints. The reducer rejects a
+                                          # late result so an old album cannot recolour a new track;
+                                          # extraction and animation remain in their own modules.
+                                          # 3310 -> 3320: a second lyric provider once added its own
+                                          # consent message; that provider was removed before release.
+                                          # 3320 -> 3369: the glass control adds one preference
+                                          # message and two tagged artwork result shapes, plus their
+                                          # reducer arms and stale-radius guards. Rendering remains in
+                                          # style.rs and artwork.rs.
+                                          # 3369 -> 3407: optional Jamkin Mode adds its model field,
+                                          # preference message and reducer arm, plus construction of the
+                                          # separate actor. Its window and timeline stay in
+                                          # `components/jamkin_mode.rs`.
+                                          # 3407 -> 3470: live pet size and a portal-confirmed launcher
+                                          # tile add model messages and reducer results. Portal I/O and
+                                          # templates stay in `launcher_icon.rs`.
+                                          # 3470 -> 3666: the account-generation boundary rejects stale
+                                          # asynchronous data after sign-out; a direct settings button,
+                                          # optional Discord presence and stricter deep-session clearing
+                                          # add their model fields/messages/reducer arms. IPC remains in
+                                          # `discord.rs`, while dialogs remain in `chrome.rs`.
+                                          # 3666 -> 3680: one persisted compositor-overlay message and
+                                          # reducer arm; the window/protocol implementation remains in
+                                          # `components/jamkin_mode.rs`.
+                                          # 3680 -> 3703: persisted overlay margins cross the model and
+                                          # reducer; compositor geometry stays in Jamkin Mode.
+                                          # 3703 -> 3715: one local image-quality message and reducer
+                                          # arm; decoding and caching remain in `jamkin_actor.rs`.
+                                          # 3717 -> 3721: changing views immediately refreshes the
+                                          # player snapshot so its Lyrics shortcut cannot duplicate
+                                          # the page that is already open.
+                                          # 3721 -> 3756: lyric colour and OLED care cross the model as
+                                          # two settings messages and reducer arms; rendering, geometry
+                                          # and timers remain in their dedicated modules.
+                                          # 3756 -> 3802: opacity, Jamkin motion, lyric scale and
+                                          # background-visibility preferences cross as four bounded
+                                          # messages/reducer arms; each renderer remains outside.
+                                          # 3802 -> 3770: the publication review removed the second
+                                          # lyric provider and its preference path.
+src/app/chrome.rs                    940  # menus and the dialogs they open. Jamelade's companion
+                                          # preference includes a local image preview and updates its
+                                          # personality text without involving the main view tree.
+                                          # The removed second lyric provider had its own disclosure;
+                                          # LRCLIB remains separately consented.
+                                          # 635 -> 655: one native scale row exposes transparency and
+                                          # blur together; persistence and rendering stay elsewhere.
+                                          # 655 -> 668: one switch exposes the separately owned desktop
+                                          # Jamkin window; the actor itself remains in components.
+                                          # 668 -> 740: one rounded-tile preview chooser and one native
+                                          # size scale. Portal work and actor resizing remain outside
+                                          # this dialog module.
+                                          # 740 -> 762: one explicitly optional Discord disclosure switch
+                                          # and the wider, immediately applied Jamkin size range. Socket
+                                          # work stays in `discord.rs`.
+                                          # 762 -> 782: one capability-aware Jamkin overlay switch. The
+                                          # alternate surface remains in `components/jamkin_mode.rs`.
+                                          # 782 -> 803: one native combo exposes Automatic, High and
+                                          # Performance; the policy lives in `settings/jamkin_quality.rs`.
+                                          # 803 -> 816: a non-interactive first-party Apple lyrics row
+                                          # makes the source order visible beside the two genuinely
+                                          # optional disclosure switches.
+                                          # 816 -> 867: one native lyric-colour scale and one capability-
+                                          # aware OLED switch. Neither owns rendering or movement.
+                                          # 867 -> 947: four native rows expose opacity, reduced Jamkin
+                                          # motion, lyric text scale and background visibility. The
+                                          # behavior and persistence remain in their owning modules.
+                                          # 947 -> 940: publication text changed while the unused
+                                          # second-provider switch was removed.
+src/settings.rs                      755  # preferences remain one bounded key-file schema.
+                                          # 605 -> 630: bounded Jamkin overlay margins are persisted
+                                          # alongside the other non-secret window preferences.
+                                          # 630 -> 656: one local asset-quality key joins that schema;
+                                          # its enum and selection policy are split into a child module.
+                                          # 656 -> 657: the LRCLIB setting documents that it follows
+                                          # the first-party Apple lookup; the stored schema is unchanged.
+                                          # 657 -> 693: two bounded presentation keys persist nearby-
+                                          # lyric colour and OLED care; both remain non-secret local state.
+                                          # 693 -> 762: four bounded, non-secret accessibility/window
+                                          # preferences join the same schema, including safe defaults.
+                                          # 762 -> 755: the removed lyric provider no longer persists
+                                          # a redundant consent key.
+src/discord.rs                       699  # one optional local Discord IPC boundary, including its
+                                          # bounded payload policy and tests. It was introduced at 614;
+                                          # no network client or user credential belongs here.
+                                          # 614 -> 660: a low-frequency local heartbeat and one bounded
+                                          # reconnect path recover after Discord/Vesktop replaces its
+                                          # Unix socket. The worker still retains only the newest track.
+                                          # 660 -> 699: a socket-pair regression test drops the first
+                                          # peer and proves the unchanged activity reaches a replacement.
+src/components/jamkin_mode.rs        761  # the two compositor-specific Jamkin surfaces and shared
+                                          # hover-lyrics state. A small typed configuration threads
+                                          # companion, quality and placement to both surfaces without
+                                          # growing already callback-heavy constructors.
+                                          # 619 -> 679: OLED care adds interaction gates and lifecycle
+                                          # wiring here; its timer, animation and geometry are split into
+                                          # the under-budget `jamkin_mode/oled.rs` child module.
+                                          # 679 -> 761: one settings snapshot and live setters add
+                                          # opacity, reduced motion and main-window visibility to both
+                                          # surfaces without duplicating compositor logic.
+src/components/lyrics_view.rs        625  # one native synchronized-lyrics surface and its bounded
+                                          # temporal animation state. Timed labels are now accessible
+                                          # seek buttons while unsynced text remains selectable.
+                                          # 619 -> 625: reduced motion is applied live to the existing
+                                          # Jamkin actor; lyric animation remains in this component.
+src/components/now_playing.rs       1103  # one component, and the one whose seek arithmetic took
+                                          # four rounds to get right. Splitting it is a design
+                                          # question, not a move.
+                                          # 1220 -> 1240: `mode_opacity`, shared with the drawer
+                                          # and the queue header so one control cannot read two
+                                          # ways in one app.
+                                          # 1240 -> 960: the bar's scale became a read-only line, so the
+                                          # whole seek-hold apparatus went with it. Lowering a number as a
+                                          # file shrinks is the ratchet working.
+                                          # 1020 -> 1040: shuffle, repeat and volume stand down on a
+                                          # narrow window, and the comment on why a hidden stack child
+                                          # was setting the whole window's minimum width.
+                                          # 1040 -> 1080: the volume write moved out of `#[watch]`
+                                          # into `post_view`, which has to keep the handler's id and
+                                          # block it while writing, plus the measurement that forced
+                                          # it — 495k laps at 100% of a core, and the note that a
+                                          # value comparison cannot fix it.
+                                          # 1080 -> 1100: the Lyrics intent and one native bar button;
+                                          # provider state remains outside the playback component.
+                                          # 1100 -> 1103: the snapshot records whether Lyrics is the
+                                          # active page so that same button can stand down there.
+src/music/client.rs                 1624  # one endpoint per method against one API. Long because
+                                          # Apple is, and each method is short.
+                                          # 980 -> 1020: `song_containers`. A queue item carries no
+                                          # album or artist id, so walking from a queue row to a page
+                                          # is a lookup — and a lookup is an endpoint, which is what
+                                          # this file is a list of.
+                                          # 1020 -> 1450: four documented discovery endpoints, their
+                                          # bounded wire types, partial-failure fold and boundary tests.
+                                          # 1450 -> 1460: one first-page playlist relationship for
+                                          # grid mosaics; it avoids fetching every track just for art.
+                                          # 1460 -> 1500: default recommendations keep every bounded
+                                          # group, parse stations into playable native cards, and
+                                          # test their id/name boundary before the sidecar sees them.
+                                          # 1500 -> 1540: every response is streamed through one hard
+                                          # size ceiling, transport errors discard private URLs, and
+                                          # interpolated resource kinds/identifiers are allowlisted or
+                                          # encoded at the API boundary.
+                                          # 1540 -> 1624: Apple lyrics add one numeric-id endpoint, a
+                                          # dedicated 2 MiB response ceiling and tiny wire types. TTML
+                                          # parsing remains in `lyrics/apple_ttml.rs`.
+src/music/types.rs                  1010  # the JSON boundary (rule 9). Wire types and our types
+                                          # side by side is the point — they are read together.
+                                          # 860 -> 900 for #84: `Serialize`/`Deserialize` on the five
+                                          # types the library cache persists, and two tests — that a
+                                          # round trip keeps an artwork's cache key (or every cover
+                                          # re-downloads) and that `Track`'s new `PartialEq` sees a
+                                          # star change (or a refresh skips the rebuild it needed).
+                                          # 900 -> 910: `SongContainers`, the two relationships that
+                                          # answer which album and artist a queue track came from.
+                                          # 910 -> 970: typed Explore items and shelves keep mixed
+                                          # Apple resources from reaching native widgets as JSON.
+                                          # 970 -> 1010: stations are a typed Explore resource with
+                                          # only the id, name and artwork MusicKit playback needs.
+src/app/view.rs                      840  # which section is showing, and how each one is sorted.
+                                          # 680 -> 730 for #100: `SIDEBAR`, the array the sidebar rows
+                                          # are built from, and a test pinning its order to `row()`.
+                                          # It belongs beside `from_row`, and this growth is `mod.rs`
+                                          # shrinking by twice as much.
+                                          # The sort keys differ per section because the *data*
+                                          # does — measured, and the measurement is in the
+                                          # comments so nobody re-guesses it.
+                                          # 730 -> 790 for #133: `SidebarRow`, `sidebar_rows` and
+                                          # `section_index` replacing the index contract, and three
+                                          # tests pinning the new mapping in place of the two that
+                                          # pinned the old one. A pin is not a section, so a row's
+                                          # position can no longer say what it does.
+                                          # 790 -> 840: Explore and Lyrics are persisted views with
+                                          # explicit search, refresh and sorting capabilities.
+src/app/library.rs                   855  # four collections and the catalog search, all landing in
+                                          # the same list.
+                                          # 760 -> 800 for #84: seeding those collections from the disk
+                                          # cache and writing them back. It owns loading them, so it
+                                          # owns where they are loaded *from*.
+                                          # 800 -> 845 for #83: the artwork keep-set is derived from
+                                          # these four collections, so the derivation belongs with
+                                          # them rather than beside the sweep that consumes it.
+                                          # 845 -> 850: grid items receive the bounded playlist-mosaic
+                                          # request beside their ordinary Apple-artwork request.
+                                          # 850 -> 855: asynchronous loads carry the account generation
+                                          # that prevents a signed-out account repopulating the UI.
+src/player/protocol.rs               895  # the whole sidecar contract in one file, deliberately
+                                          # (rule 9). Splitting it would hide the drift it exists
+                                          # to prevent.
+                                          # 650 -> 740 for #89: a shared `ms` deserializer that
+                                          # floors MusicKit's negative sentinels, and four tests
+                                          # built from the exact lines it rejected.
+                                          # 740 -> 780 for #121: `QueueChange`, which is why a queue
+                                          # event fired. Two MusicKit events the sidecar used to
+                                          # collapse into one, and the explanation of why settling
+                                          # the wrong one fights gapless is worth the lines.
+                                          # 780 -> 790: `Event::Volume`. Volume was write-only until
+                                          # it was measured that MusicKit keeps its own and restores
+                                          # it across launches — so the contract gained a direction
+                                          # it should always have had.
+                                          # 790 -> 850 in the hardened fork: secure-storage mode is
+                                          # now explicit, and both Apple credentials plus storefront
+                                          # are shape-checked before entering application memory. The
+                                          # tests pin rejection without ever printing token values.
+                                          # 850 -> 875: a station's open-ended queue descriptor and
+                                          # exact JSON test keep it distinct from finite song queues.
+                                          # 875 -> 895: remote queue arrays and their text fields gain
+                                          # structural limits before deserialization can retain them.
+src/components/player_view/mod.rs    890  # the model, `view!` and the reducer. The transport
+                                          # moved to a child module — see its header for why a
+                                          # child and not a sibling. 870 before the split; this
+                                          # number comes down as the ratchet intends, and is the
+                                          # first time it has.
+                                          # 790 -> 830: the drawer sizes its cover from the room it is
+                                          # given rather than a constant, which is what lets it fit a
+                                          # short window — plus the two constants that arithmetic is
+                                          # built on, both measured.
+                                          # 830 -> 875: the cover stands down beside a short queue,
+                                          # `QUEUE_NEEDS_ROOM` with the measurement behind it, and the
+                                          # title taking a second size for the job it does there, and
+                                          # the empty transport slot no longer claiming spacing.
+src/style.rs                        1170  # the accent, and the cover behind the whole window. The only
+                                          # CSS, and each rule argues for itself where it sits.
+                                          # Over budget for one test: the backdrop must never carry
+                                          # an animation. An `infinite` one cost ~20% of a core
+                                          # permanently (#126), and the drift that did it was
+                                          # invisible by design — so nothing would notice it coming
+                                          # back except this.
+                                          # 610 -> 625 for #120: the volume panel's pill. `.osd`
+                                          # brings the colours and stops at square corners, and
+                                          # there is no libadwaita widget for an OSD panel to
+                                          # inherit a shape from.
+                                          # 625 -> 660 for #145: the Preferences toggle. It lives
+                                          # here rather than at the call site because this module
+                                          # owns what is on screen — `SHOWN_ART` is what the
+                                          # theme-flip handler repaints from, so a caller-side gate
+                                          # would put the cover back on the next light/dark flip.
+                                          # 660 -> 710: Explore shelves and synchronized lyrics have no
+                                          # stock widget; their hierarchy uses the existing accent CSS.
+                                          # 710 -> 730: live lyrics distinguish past, current and plain
+                                          # lines, and name the synchronized source visibly.
+                                          # 730 -> 755: the restrained Jamkin surface wash and companion
+                                          # name share the existing accent variables rather than adding
+                                          # a second theme provider.
+                                          # 900 -> 1028: whole-window album glass adds a separately
+                                          # replaceable material provider, bounded opacity formulas and
+                                          # tests for all three surfaces, both themes and the font stack.
+                                          # 1028 -> 1077: the transparent Jamkin toplevel and its hover
+                                          # lyric popover need one local material; window/timeline logic
+                                          # remains in `components/jamkin_mode.rs`.
+                                          # 1077 -> 1079: the separate toplevel explicitly inherits the
+                                          # same desktop font stack as the main window.
+                                          # 1079 -> 1140: the narrow sidebar becomes an album-tinted
+                                          # glass surface with explicit hover and selection depth instead
+                                          # of stock grey slabs.
+                                          # 1140 -> 1146: two theme-aware text shadows keep inactive
+                                          # lyrics legible over bright or dark album art without boxing
+                                          # every line in another surface.
+                                          # 755 -> 837: the same Jamkin provider gains a translucent
+                                          # material for the existing header, sidebar, player, Explore
+                                          # and lyrics surfaces. It remains one palette and one CSS
+                                          # provider; splitting those selectors would hide that they
+                                          # must change together in light and dark themes.
+                                          # 837 -> 900: a two-variable provider cross-fades locally
+                                          # extracted album colours on the same finite clock as the
+                                          # cover. Palette extraction stays in `palette.rs`; this file
+                                          # owns only what is currently painted and how it transitions.
+                                          # 1146 -> 1203: a separately replaceable three-selector lyrics
+                                          # provider makes nearby accent strength live and testable without
+                                          # reparsing or recolouring the rest of the application.
+                                          # 1203 -> 1207: document GTK's counterintuitive mix weighting
+                                          # where the corrected lyric-colour order is applied.
+                                          # 1207 -> 1170: use only the desktop system font and remove
+                                          # the Apple-font fallback and its tests.
+src/app/queue.rs                     885  # click -> setQueue, healing a queue MusicKit rejected, and
+                                          # resolving which row a click meant.
+                                          # 600 -> 640 for #88: `index_at` and the three tests that
+                                          # pin it — a duplicated track, a shifted queue, and a
+                                          # position past the end.
+                                          # 640 -> 735 for #147: `playable_rows`, `shuffle_start` and
+                                          # four tests. Mostly the tests, and they are the point —
+                                          # the bug was a hard-coded row 0, so what needs pinning is
+                                          # which rows a shuffle may open on and which would fall
+                                          # back to the top.
+                                          # 735 -> 885 for #152: `Start`, which makes the shuffle
+                                          # mode a thing each enqueue has to state, and the four
+                                          # tests pinning what a row click does on a queue being
+                                          # built versus one already loaded, and which queues are
+                                          # worth verifying the start of at all. It belongs here
+                                          # because this file is already where a click becomes a
+                                          # queue. Most of the growth is the two comments recording
+                                          # what was measured against a live player — the guard was
+                                          # wrong twice before it was right.
+sidecar/main.js                      860  # the Electron process boundary: sandbox creation,
+                                          # navigation and popup policy, encrypted-cookie fallback,
+                                          # bounded protocol, lifecycle and DRM startup. Security
+                                          # policy is split into security.js; the remaining comments
+                                          # document observed Chromium behaviours that are load-bearing.
+                                          # 710 -> 740 in the hardened fork: Chromium is now always
+                                          # memory-only; main wires the separately tested keyring-
+                                          # encrypted Apple-cookie vault and flushes it on shutdown.
+                                          # 740 -> 795: host allowlisting, download/permission denial,
+                                          # event-rate limits, bounded pending commands and privacy-safe
+                                          # lifecycle logs harden the privileged Electron boundary. Its
+                                          # HTTP cache is now disabled and legacy cache cleared.
+                                          # 795 -> 860: a login-scoped, once-only document refresh rebuilds
+                                          # MusicKit after Apple completes auth reflection, with a bounded
+                                          # user-token fallback and no credential logging or new origin.
+sidecar/page-hook.js                 713  # the injected MusicKit hook (rule 4), and the one file that is
+                                          # deliberately defensive line by line: every property
+                                          # feature-detected, every silent failure made loud.
+                                          # Recorded rather than cut because most of its length is
+                                          # the traps that cost rounds to find — `did-start-loading`
+                                          # invalidating the hook, the two queue events that must
+                                          # not be collapsed, MusicKit's signed queue position.
+                                          # The budget is a ratchet on the JS, which rule "every
+                                          # line here is a line that isn't native" makes worth
+                                          # watching. It is now isolated from Electron in its own
+                                          # page-world file; preload.js is an 80-line bounded bridge.
+                                          # 645 -> 660: bounded station ids enter MusicKit through a
+                                          # dedicated queue command; no new Electron capability.
+                                          # 660 -> 705: the account storefront is distinguished from
+                                          # the page storefront, synchronized into MusicKit, and an
+                                          # exact CONTENT_EQUIVALENT mismatch retries once. This stays
+                                          # beside the only code that touches MusicKit rather than
+                                          # becoming a second page-world script/capability.
+                                          # 705 -> 713: Apple's existing auth-reflection event emits one
+                                          # boolean lifecycle signal; tokens remain on their established
+                                          # bounded channel and never enter the signal.
+src/player/sidecar.rs                656  # the Rust/Electron process boundary. Bounded command/event
+                                          # channels, rate windows and a capped line reader prevent a
+                                          # compromised renderer or wedged child from retaining memory
+                                          # without limit; raw protocol data and local paths stay out of
+                                          # diagnostics. Splitting those halves would hide the boundary.
+                                          # 649 -> 656: a fixed, URL-free warning makes a denied network
+                                          # request visible without logging its hostname or page data.
+src/components/artwork.rs            617  # the single artwork trust boundary plus its decode, atomic
+                                          # cache, blur and image tests. HTTPS/mzstatic validation,
+                                          # redirect denial, streamed size limits, symlink checks and
+                                          # URL-free errors belong beside the only fetch they protect.

@@ -1,0 +1,16 @@
+{
+  "name": "jamelade-sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Invisible DRM playback engine for Jamelade. Never rendered.",
+  "license": "GPL-3.0-or-later",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "debug": "JAMELADE_SHOW_SIDECAR=1 electron .",
+    "test": "node --test page-hook.test.js security.test.js session-vault.test.js"
+  },
+  "devDependencies": {
+    "electron": "git+https://github.com/castlabs/electron-releases.git#8244344c33634d9323377c0d0fd1d9b7f9b69540"
+  }
+}
