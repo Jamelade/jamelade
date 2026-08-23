@@ -66,7 +66,9 @@ jobs:
           FLATPAK_BUILD_INSTALLATION: "system"
           RELEASE_SKIP_SOURCE_CHECKS: "1"
           REPRO_CHECK: "1"
-        run: ./scripts/release-check.sh
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          ./scripts/release-check.sh
 
       - name: Verify release assets
         run: |
