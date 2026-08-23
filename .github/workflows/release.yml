@@ -59,7 +59,7 @@ jobs:
             appstream desktop-file-utils flatpak flatpak-builder jq
           flatpak remote-add --user --if-not-exists flathub \
             https://dl.flathub.org/repo/flathub.flatpakrepo
-          flatpak install --user --noninteractive --yes flathub \
+          flatpak install --user --noninteractive --assumeyes flathub \
             org.gnome.Platform//49 \
             org.gnome.Sdk//49 \
             org.freedesktop.Sdk.Extension.rust-stable//25.08 \
