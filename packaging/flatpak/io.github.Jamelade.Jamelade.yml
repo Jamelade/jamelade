@@ -73,6 +73,10 @@ modules:
   - name: gtk4-layer-shell
     buildsystem: meson
     config-opts:
+      # Some host distributions default Meson to lib64 even inside the
+      # Flatpak SDK. Keep the dependency in Flatpak's portable /app/lib path,
+      # which pkg-config and the runtime loader both search.
+      - --libdir=lib
       - -Dexamples=false
       - -Ddocs=false
       - -Dtests=false
