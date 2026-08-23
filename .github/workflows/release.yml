@@ -57,9 +57,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes \
             appstream desktop-file-utils flatpak jq
-          flatpak remote-add --user --if-not-exists flathub \
+          sudo flatpak remote-add --system --if-not-exists flathub \
             https://dl.flathub.org/repo/flathub.flatpakrepo
-          flatpak install --user --noninteractive --assumeyes flathub \
+          sudo flatpak install --system --noninteractive --assumeyes flathub \
             org.flatpak.Builder//stable \
             org.gnome.Platform//49 \
             org.gnome.Sdk//49 \
@@ -68,6 +68,7 @@ jobs:
 
       - name: Build release candidate
         env:
+          FLATPAK_BUILD_INSTALLATION: "system"
           RELEASE_SKIP_SOURCE_CHECKS: "1"
         run: ./scripts/release-check.sh
 

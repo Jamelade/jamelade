@@ -12,6 +12,7 @@
 # refuses a byte-different unsigned bundle.
 # FLATPAK_GPG_KEY=<id> signs the exported Flatpak commit when a maintained
 # release key exists; checksums should still be signed separately at publish.
+# FLATPAK_BUILD_INSTALLATION=user|system selects where Builder finds SDKs.
 
 set -euo pipefail
 export LC_ALL=C
@@ -48,6 +49,19 @@ builder=(flatpak run org.flatpak.Builder)
 if command -v flatpak-builder >/dev/null 2>&1; then
     builder=(flatpak-builder)
 fi
+
+case "${FLATPAK_BUILD_INSTALLATION:-user}" in
+    user)
+        builder_installation=(--user)
+        ;;
+    system)
+        builder_installation=(--system)
+        ;;
+    *)
+        printf 'release check: FLATPAK_BUILD_INSTALLATION must be user or system\n' >&2
+        exit 1
+        ;;
+esac
 
 version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
 [[ -n "$version" ]] || {
@@ -98,7 +112,8 @@ if [[ -n "${FLATPAK_GPG_KEY:-}" ]]; then
     sign_args+=("--gpg-sign=$FLATPAK_GPG_KEY")
 fi
 
-"${builder[@]}" --override-source-date-epoch="$release_epoch" --force-clean --user \
+"${builder[@]}" --override-source-date-epoch="$release_epoch" --force-clean \
+    "${builder_installation[@]}" \
     --repo="$repo" "${sign_args[@]}" \
     "$root/build-dir" "$manifest"
 
@@ -169,7 +184,8 @@ if [[ "${REPRO_CHECK:-0}" == 1 ]]; then
     trap 'rm -rf -- "$second"' EXIT
     "${builder[@]}" --override-source-date-epoch="$release_epoch" \
         --disable-cache --force-clean \
-        --user --state-dir="$second/state" --repo="$second/repo" \
+        "${builder_installation[@]}" \
+        --state-dir="$second/state" --repo="$second/repo" \
         "$second/build" "$manifest"
     flatpak build-bundle \
         --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
