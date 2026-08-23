@@ -56,10 +56,11 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install --yes \
-            appstream desktop-file-utils flatpak flatpak-builder jq
+            appstream desktop-file-utils flatpak jq
           flatpak remote-add --user --if-not-exists flathub \
             https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak install --user --noninteractive --assumeyes flathub \
+            org.flatpak.Builder//stable \
             org.gnome.Platform//49 \
             org.gnome.Sdk//49 \
             org.freedesktop.Sdk.Extension.rust-stable//25.08 \
