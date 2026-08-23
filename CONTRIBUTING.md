@@ -47,7 +47,8 @@ unit tests cannot cover those environments.
 - Preserve privacy defaults: optional network integrations stay off until the
   user explicitly enables them.
 - Treat authentication, cookie storage, sidecar IPC, navigation rules,
-  external URLs, packaging, and dependency updates as security-sensitive.
+  external URLs, host-helper IPC, packaging, and dependency updates as
+  security-sensitive.
 - Do not add telemetry, advertising, bundled credentials, broad filesystem
   access, remote code loading, or silent update mechanisms.
 - Keep generated files and large binaries out of Git unless the repository

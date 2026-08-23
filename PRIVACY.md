@@ -34,6 +34,10 @@ Apple applies its own privacy policy and service terms to this traffic.
   settings. No Discord token or client secret is used.
 - **Desktop Jamkin, themes, and collages:** local only. They reuse already
   loaded playback state and cached artwork.
+- **Launcher-icon helper:** optional and installed separately for the current
+  user. It has no network client, accepts only the three bundled Jamkin names,
+  and writes only Jamelade's fixed launcher entry. Without it, Jamelade uses
+  the desktop's confirmation portal.
 
 Disabling an optional connection stops new requests to it and clears Jamelade's
 in-memory lyric cache when lyric consent changes.

@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Jamelade contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! User-confirmed launcher-icon replacement through the desktop portal.
+//! Launcher-icon replacement through a narrow host helper or desktop portal.
 //!
-//! A Flatpak cannot safely rewrite its exported `.desktop` file. Granting it
-//! `xdg-data/applications` would also expose other launchers, so Jamelade ships
-//! one stable sub-launcher and asks the Dynamic Launcher portal to replace only
-//! that entry. The desktop owns the confirmation and the resulting host file.
+//! A Flatpak cannot safely rewrite its exported `.desktop` file. The optional
+//! same-user helper exposes only `SetIcon(JamBun|JamPam|JamJoe)` and can touch
+//! only Jamelade's stable launcher. When it is absent, the desktop-controlled
+//! Dynamic Launcher portal remains the no-extra-component fallback.
 
 use anyhow::{Context, Result, anyhow};
 use ashpd::desktop::Icon;
@@ -15,13 +15,19 @@ use ashpd::desktop::dynamic_launcher::{DynamicLauncherProxy, PrepareInstallOptio
 use crate::companion::Companion;
 
 pub const DESKTOP_FILE_ID: &str = "io.github.Jamelade.Jamelade.Launcher.desktop";
-pub const PREFERENCE_HELP: &str = "Choose a Jamkin, then approve the desktop dialog. KDE calls \
-    it \"Add Application\"; it updates Jamelade rather than installing another copy. Restart \
-    Jamelade afterward.";
+pub const PREFERENCE_HELP: &str = "With the optional icon helper, the existing Jamelade launcher \
+    updates directly. Without it, approve KDE's “Add Application” dialog, restart Jamelade, and \
+    re-pin the launcher if the dock keeps its old icon.";
 pub const CONFIRM_HELP: &str =
-    "Choose “Add Application” in the desktop dialog; it updates Jamelade";
-pub const CHANGED_HELP: &str = "Icon changed. Restart Jamelade to update the app menu; re-pin it \
-    if the dock keeps the old icon.";
+    "Changing the launcher icon… approve the desktop dialog if one appears";
+pub const HELPER_CHANGED_HELP: &str =
+    "Icon changed. The app menu and dock may take a moment to refresh.";
+pub const PORTAL_CHANGED_HELP: &str = "Icon changed. Restart Jamelade to update the app menu; \
+    re-pin it if the dock keeps the old icon.";
+
+const HELPER_BUS: &str = "io.github.Jamelade.IconHelper";
+const HELPER_PATH: &str = "/io/github/Jamelade/IconHelper";
+const HELPER_INTERFACE: &str = "io.github.Jamelade.IconHelper";
 
 const DESKTOP_ENTRY: &str = "[Desktop Entry]\n\
 Type=Application\n\
@@ -38,7 +44,35 @@ const MAX_LAUNCHER_ICON_BYTES: usize = 10 * 1024 * 1024;
 /// Ask the desktop to install the selected rounded tile. No Apple data,
 /// listening history or network request is involved; only the bundled PNG and
 /// this fixed launcher template cross the portal boundary.
-pub async fn install(companion: Companion) -> Result<()> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallMethod {
+    Helper,
+    Portal,
+}
+
+pub async fn install(companion: Companion) -> Result<InstallMethod> {
+    if install_with_helper(companion).await.is_ok() {
+        return Ok(InstallMethod::Helper);
+    }
+    install_with_portal(companion).await?;
+    Ok(InstallMethod::Portal)
+}
+
+async fn install_with_helper(companion: Companion) -> Result<()> {
+    let connection = ashpd::zbus::Connection::session()
+        .await
+        .context("the session bus is unavailable")?;
+    let proxy = ashpd::zbus::Proxy::new(&connection, HELPER_BUS, HELPER_PATH, HELPER_INTERFACE)
+        .await
+        .context("the icon helper is unavailable")?;
+    let _: () = proxy
+        .call("SetIcon", &(companion.label(),))
+        .await
+        .context("the icon helper rejected the change")?;
+    Ok(())
+}
+
+async fn install_with_portal(companion: Companion) -> Result<()> {
     let path = companion
         .launcher_icon_path()
         .ok_or_else(|| anyhow!("{} launcher artwork is missing", companion.label()))?;
@@ -100,7 +134,10 @@ mod tests {
     #[test]
     fn icon_help_explains_the_desktop_confirmation() {
         assert!(PREFERENCE_HELP.contains("Add Application"));
-        assert!(PREFERENCE_HELP.contains("rather than installing another copy"));
-        assert!(CHANGED_HELP.contains("Restart Jamelade"));
+        assert!(PREFERENCE_HELP.contains("restart Jamelade"));
+        assert!(PREFERENCE_HELP.contains("re-pin"));
+        assert!(PREFERENCE_HELP.contains("optional icon helper"));
+        assert!(PORTAL_CHANGED_HELP.contains("Restart Jamelade"));
+        assert!(!HELPER_CHANGED_HELP.contains("Restart"));
     }
 }

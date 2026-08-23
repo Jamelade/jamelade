@@ -4,6 +4,7 @@
 //! Widgets. Nothing in here talks to the sidecar or to `reqwest` directly —
 //! components receive plain data from `app/mod.rs` and emit intent back (rule 9).
 
+pub mod artist_view;
 pub mod artwork;
 pub mod cover;
 pub mod detail_page;

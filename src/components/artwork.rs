@@ -258,6 +258,7 @@ pub fn decode(path: &Path, size: i32) -> Option<Decoded> {
 /// Big enough that the upscale to the sheet is a few times rather than twenty,
 /// because **GTK does not interpolate this smoothly**. See [`backdrop`].
 const BACKDROP_PX: i32 = 256;
+const CLEAR_BACKDROP_PX: i32 = ART_SIZE as i32;
 
 /// Bounds for the user-adjustable blur radius.
 ///
@@ -273,11 +274,10 @@ const BACKDROP_PX: i32 = 256;
 /// saturation afterwards recovers that, because there is no chroma left to
 /// multiply.
 ///
-/// So: blur enough to destroy legible detail, and put the colour back with
-/// saturation rather than trying to keep it through a very wide average.
-const MIN_BLUR_RADIUS: usize = 3;
+/// So ordinary glass blurs enough to destroy legible detail and restores the
+/// lost colour with saturation. The explicit clear endpoint skips both.
 const MAX_BLUR_RADIUS: usize = 13;
-const BACKDROP_CACHE_VERSION: u8 = 2;
+const BACKDROP_CACHE_VERSION: u8 = 4;
 
 /// How much to lift the colour after blurring, as a percentage.
 ///
@@ -288,20 +288,29 @@ const BACKDROP_CACHE_VERSION: u8 = 2;
 ///
 /// Applied after the blur, deliberately: saturating first would amplify the
 /// noise the blur is about to smear.
-const MIN_SATURATION: u32 = 190;
-
-/// Turn the persisted 0–100 glass value into one of eleven cacheable radii.
-/// The opacity changes continuously, while quantising this expensive half
-/// prevents a drag across the slider from writing a hundred images per cover.
+/// Turn the persisted 0–100 glass value into cacheable radii. The explicit
+/// 100% endpoint is the original cover with no blur. The radius now approaches
+/// zero rather than growing toward 99 and falling off a cliff at 100.
 pub(crate) fn backdrop_blur_radius(strength: u8) -> usize {
-    let span = MAX_BLUR_RADIUS - MIN_BLUR_RADIUS;
-    MIN_BLUR_RADIUS + (span * usize::from(strength.min(100)) + 50) / 100
+    let remaining = usize::from(100_u8.saturating_sub(strength.min(100)));
+    if remaining == 0 {
+        return 0;
+    }
+    (MAX_BLUR_RADIUS * remaining).div_ceil(100)
 }
 
 /// A wider average needs a little more colour restored. Derived only from the
 /// radius so the radius alone is sufficient as the cache key.
 fn saturation(radius: usize) -> u32 {
-    MIN_SATURATION + (radius.saturating_sub(MIN_BLUR_RADIUS) as u32 * 3)
+    100 + radius as u32 * 9
+}
+
+fn backdrop_size(radius: usize) -> i32 {
+    if radius <= 2 {
+        CLEAR_BACKDROP_PX
+    } else {
+        BACKDROP_PX
+    }
 }
 
 /// Write a blurred copy of a cover beside it, and say where.
@@ -318,7 +327,7 @@ fn saturation(radius: usize) -> u32 {
 /// per cover and cached, so the convolution is not per track change; it is per
 /// cover, ever, on a worker thread.
 ///
-/// So the blur is real now, and the stored image is larger for a second reason:
+/// So the ordinary blur is real now, and the stored image is larger for a second reason:
 /// with nearest-neighbour upscaling the block size is the ratio, so 256px
 /// leaves blocks of about four pixels where 48px left twenty. Blurring alone
 /// would have smoothed their *colour* while leaving their edges.
@@ -330,14 +339,14 @@ fn saturation(radius: usize) -> u32 {
 /// Off the GTK thread (rule 8).
 pub fn backdrop(path: &Path, strength: u8) -> Option<PathBuf> {
     let radius = backdrop_blur_radius(strength);
+    let size = backdrop_size(radius);
     let out = path.with_extension(format!(
-        "backdrop{BACKDROP_PX}-g{BACKDROP_CACHE_VERSION}-r{radius}.png"
+        "backdrop{size}-g{BACKDROP_CACHE_VERSION}-r{radius}.png"
     ));
     if is_safe_cached_file(&out, MAX_ARTWORK_BYTES) {
         return Some(out);
     }
-    let pixbuf =
-        gdk_pixbuf::Pixbuf::from_file_at_scale(path, BACKDROP_PX, BACKDROP_PX, false).ok()?;
+    let pixbuf = gdk_pixbuf::Pixbuf::from_file_at_scale(path, size, size, false).ok()?;
 
     let (w, h) = (pixbuf.width() as usize, pixbuf.height() as usize);
     let channels = pixbuf.n_channels() as usize;
@@ -586,16 +595,28 @@ mod tests {
 
     #[test]
     fn glass_strength_maps_to_a_bounded_monotonic_blur() {
-        assert_eq!(backdrop_blur_radius(0), MIN_BLUR_RADIUS);
-        assert_eq!(backdrop_blur_radius(100), MAX_BLUR_RADIUS);
-        assert_eq!(backdrop_blur_radius(255), MAX_BLUR_RADIUS);
+        assert_eq!(backdrop_blur_radius(0), MAX_BLUR_RADIUS);
+        assert_eq!(backdrop_blur_radius(70), 4);
+        assert_eq!(backdrop_blur_radius(95), 1);
+        assert_eq!(backdrop_blur_radius(99), 1);
+        assert_eq!(backdrop_blur_radius(100), 0);
+        assert_eq!(backdrop_blur_radius(255), 0);
         for strength in 0..100 {
-            assert!(backdrop_blur_radius(strength) <= backdrop_blur_radius(strength + 1));
+            assert!(backdrop_blur_radius(strength) >= backdrop_blur_radius(strength + 1));
         }
-        assert!(
-            backdrop_blur_radius(crate::settings::DEFAULT_GLASS_STRENGTH) > 4,
-            "the new default should be visibly softer than the old fixed blur"
-        );
+        assert_eq!(backdrop_size(backdrop_blur_radius(90)), CLEAR_BACKDROP_PX);
+        assert_eq!(backdrop_size(backdrop_blur_radius(70)), BACKDROP_PX);
+    }
+
+    #[test]
+    fn the_clear_endpoint_uses_full_cover_size_without_colour_processing() {
+        assert_eq!(backdrop_blur_radius(100), 0);
+        assert_eq!(saturation(0), 100);
+        assert_eq!(saturation(1), 109);
+        let name = std::path::Path::new("/tmp/abc-512.jpg").with_extension(format!(
+            "backdrop{CLEAR_BACKDROP_PX}-g{BACKDROP_CACHE_VERSION}-r0.png"
+        ));
+        assert!(name.to_string_lossy().contains("backdrop512-g4-r0.png"));
     }
 
     #[test]

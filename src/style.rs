@@ -8,13 +8,14 @@
 //! 1.6 exposes it as CSS variables (`--accent-bg-color` and friends) and there
 //! is no API to set an app-specific one, so a provider is the only route.
 //!
-//! Six providers, deliberately:
+//! Seven providers, deliberately:
 //!
 //! - a **base** one, replaced only when the accent preference changes;
 //! - a **material** one carrying the user-selected transparency;
 //! - a **glass** one carrying two locally-derived album colours;
 //! - a **backdrop** one carrying the cover behind the window, replaced on
 //!   every track; and
+//! - an **adaptive foreground** one used only at the fully clear endpoint; and
 //! - two tiny **lyrics** providers carrying nearby-line colour and text scale.
 //!
 //! Keeping them apart means a new cover does not reparse the full theme, and a
@@ -128,6 +129,9 @@ thread_local! {
     /// reason the module opens with: this one is replaced on every track, and
     /// recolouring the player should not reparse the accent rules.
     static BACKDROP: gtk::CssProvider = gtk::CssProvider::new();
+    /// White or dark text once the cover becomes exposed. Empty below that
+    /// point, so system foreground colours remain untouched for ordinary glass.
+    static ADAPTIVE_TEXT: gtk::CssProvider = gtk::CssProvider::new();
     /// Whether that cover is painted at all — the Preferences toggle (#145).
     ///
     /// Here rather than gated at the call site because this module already owns
@@ -185,6 +189,13 @@ pub fn init(
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 3,
         )
     });
+    ADAPTIVE_TEXT.with(|p| {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            p,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 6,
+        )
+    });
     lyrics::install(&display, lyrics_accent_strength, lyrics_font_scale);
     BACKDROP_ON.with(|c| c.set(backdrop));
     set_accent(accent, companion);
@@ -229,9 +240,8 @@ const COVER_LAYOUT: &str = ".jamelade-window { background-size: cover, cover, co
          .np-sheet { background-size: cover, 150% 150%; }
          .np-bar, .np-sheet { background-position: center, center; }";
 
-/// Follow the desktop's interface font. Apple licenses SF Pro for Apple-platform
-/// interface mock-ups, not as a Linux application font, so it must not be
-/// selected implicitly even when it happens to be installed on the host.
+/// Follow the desktop's normal interface font without selecting or bundling a
+/// vendor-specific typeface.
 const UI_FONT_STACK: &str = "system-ui, sans-serif";
 
 /// Apply an accent, and the handful of rules that go with it.
@@ -245,12 +255,16 @@ pub fn set_accent(accent: Accent, companion: Companion) {
                  --jam-secondary-color: {secondary};
                  --glass-primary-color: {bg};
                  --glass-secondary-color: {secondary};
+                 --art-fg-color: @window_fg_color;
+                 --art-shadow-color: @window_bg_color;
              }}"
         ),
         None => ":root {
                      --jam-secondary-color: #d99a28;
                      --glass-primary-color: var(--accent-bg-color);
                      --glass-secondary-color: #d99a28;
+                     --art-fg-color: @window_fg_color;
+                     --art-shadow-color: @window_bg_color;
                  }"
         .into(),
     };
@@ -261,10 +275,11 @@ pub fn set_accent(accent: Accent, companion: Companion) {
     let css = format!(
         "{accent_rules}
          .favorite-star {{ color: #f5c211; }}
+         .player-metadata-link {{ color: var(--accent-color); }}
 
-         /* A restrained translucent material. GTK has no backdrop filter, so
-            the depth comes from translucent layers, edge highlights and soft
-            shadows over the current album.
+         /* A restrained liquid-glass material. GTK has no backdrop-filter or
+            iOS-style refraction shader, so the depth comes from translucent
+            layers, edge highlights and soft shadows over the current album.
             Jamkin colours stay on controls and names, and stock controls
             remain Adwaita controls with their original contrast. */
          .jamelade-window {{
@@ -568,8 +583,8 @@ pub fn set_accent(accent: Accent, companion: Companion) {
                 light text. This keeps artwork-derived palettes legible without
                 putting every inactive line inside another glass pill. */
              text-shadow:
-                 0 1px 2px alpha(@window_bg_color, 0.90),
-                 0 0 10px alpha(@window_bg_color, 0.62);
+                 0 1px 2px alpha(var(--art-shadow-color), 0.90),
+                 0 0 10px alpha(var(--art-shadow-color), 0.62);
          }}
          .lyrics-line-button {{
              padding: 0;
@@ -679,17 +694,29 @@ struct MaterialOpacity {
     feature: f32,
 }
 
-fn between(at_zero: f32, at_full: f32, strength: u8) -> f32 {
-    let t = f32::from(strength.min(100)) / 100.0;
-    at_zero + (at_full - at_zero) * t
+const CLEAR_FADE_START: u8 = 70;
+const ADAPTIVE_TEXT_START: u8 = 77;
+const ADAPTIVE_TEXT_FULL: u8 = 92;
+
+/// Preserve the established 70% appearance, then ease every material layer to
+/// zero together. The old curve stopped near half opacity at 99 and jumped to
+/// zero at 100, which made the final slider step look like a mode switch.
+fn glass_opacity(at_zero: f32, at_seventy: f32, strength: u8) -> f32 {
+    let strength = strength.min(100);
+    if strength <= CLEAR_FADE_START {
+        let t = f32::from(strength) / f32::from(CLEAR_FADE_START);
+        return at_zero + (at_seventy - at_zero) * t;
+    }
+    let t = f32::from(strength - CLEAR_FADE_START) / f32::from(100 - CLEAR_FADE_START);
+    at_seventy * (1.0 - ease(t))
 }
 
 fn material_opacity(strength: u8) -> MaterialOpacity {
     MaterialOpacity {
-        header: between(0.82, 0.52, strength),
-        sidebar: between(0.84, 0.50, strength),
-        row: between(0.56, 0.30, strength),
-        feature: between(0.68, 0.42, strength),
+        header: glass_opacity(0.82, 0.61, strength),
+        sidebar: glass_opacity(0.84, 0.602, strength),
+        row: glass_opacity(0.56, 0.378, strength),
+        feature: glass_opacity(0.68, 0.498, strength),
     }
 }
 
@@ -698,18 +725,27 @@ fn material_opacity(strength: u8) -> MaterialOpacity {
 /// clearer. The backdrop veil is updated separately by [`paint_backdrop`].
 fn material_css(strength: u8) -> String {
     let opacity = material_opacity(strength);
+    let clear_fill = if strength >= 100 {
+        "background-image: none;"
+    } else {
+        ""
+    };
     format!(
         ".jamelade-window headerbar {{
              background-color: alpha(@window_bg_color, {:.3});
+             {clear_fill}
          }}
          .jam-glass-sidebar {{
              background-color: alpha(@window_bg_color, {:.3});
+             {clear_fill}
          }}
          .np-row {{
              background-color: alpha(@window_bg_color, {:.3});
+             {clear_fill}
          }}
          .explore-hero, .lyrics-current {{
              background-color: alpha(@window_bg_color, {:.3});
+             {clear_fill}
          }}",
         opacity.header, opacity.sidebar, opacity.row, opacity.feature
     )
@@ -726,6 +762,7 @@ pub fn set_glass_strength(strength: u8) {
     // The same cover, with a thinner or heavier legibility veil.
     let shown = SHOWN_ART.with(|art| art.borrow().clone());
     paint_backdrop(shown.as_deref().map(image_of));
+    refresh_adaptive_text();
 }
 
 thread_local! {
@@ -846,6 +883,7 @@ pub fn set_backdrop_art(path: Option<&std::path::Path>) {
     let path = path.map(std::path::Path::to_path_buf);
     SHOWN_ART.with(|shown| *shown.borrow_mut() = path.clone());
     paint_backdrop(path.as_deref().map(image_of));
+    refresh_adaptive_text();
 }
 
 /// Override only the two glass variables. Removing the override reveals the
@@ -866,6 +904,80 @@ fn paint_album_palette(palette: Option<AlbumPalette>) {
         })
         .unwrap_or_default();
     GLASS.with(|provider| provider.load_from_string(&css));
+    refresh_adaptive_text();
+}
+
+fn adaptive_text_css(palette: AlbumPalette, blend: f32) -> String {
+    let (foreground, shadow) = if palette.prefers_light_foreground() {
+        ("#ffffff", "#08090b")
+    } else {
+        ("#111216", "#ffffff")
+    };
+    let blend = blend.clamp(0.0, 1.0);
+    format!(
+        ":root {{
+             --art-target-color: {foreground};
+             --art-fg-color: mix(@window_fg_color, var(--art-target-color), {blend:.3});
+             --art-shadow-color: {shadow};
+         }}
+         .art-foreground,
+         .art-foreground headerbar,
+         .np-bar,
+         .np-sheet {{
+             color: var(--art-fg-color);
+             text-shadow:
+                 -1px -1px 1px alpha(var(--art-shadow-color), {:.3}),
+                  1px -1px 1px alpha(var(--art-shadow-color), {:.3}),
+                 -1px  1px 1px alpha(var(--art-shadow-color), {:.3}),
+                  1px  1px 1px alpha(var(--art-shadow-color), {:.3}),
+                  0 0 7px alpha(var(--art-shadow-color), {:.3});
+         }}
+         .art-foreground headerbar button,
+         .art-foreground headerbar button image {{
+             color: var(--art-fg-color);
+             -gtk-icon-shadow:
+                 0 1px 2px alpha(var(--art-shadow-color), {:.3}),
+                 0 0 6px alpha(var(--art-shadow-color), {:.3});
+         }}
+         .art-foreground .dim-label,
+         .np-bar .dim-label,
+         .np-sheet .dim-label {{
+             color: alpha(var(--art-fg-color), 0.74);
+         }}",
+        0.96 * blend,
+        0.96 * blend,
+        0.96 * blend,
+        0.96 * blend,
+        0.68 * blend,
+        0.94 * blend,
+        0.62 * blend,
+    )
+}
+
+fn refresh_adaptive_text() {
+    let strength = GLASS_STRENGTH.with(std::cell::Cell::get);
+    let blend = adaptive_text_blend(strength);
+    let clear_art = blend > 0.0
+        && BACKDROP_ON.with(std::cell::Cell::get)
+        && SHOWN_ART.with(|art| art.borrow().is_some());
+    let css = clear_art
+        .then(|| SHOWN_PALETTE.with(std::cell::Cell::get))
+        .flatten()
+        .map(|palette| adaptive_text_css(palette, blend))
+        .unwrap_or_default();
+    ADAPTIVE_TEXT.with(|provider| provider.load_from_string(&css));
+}
+
+fn adaptive_text_blend(strength: u8) -> f32 {
+    if strength <= ADAPTIVE_TEXT_START {
+        return 0.0;
+    }
+    if strength >= ADAPTIVE_TEXT_FULL {
+        return 1.0;
+    }
+    let t = f32::from(strength - ADAPTIVE_TEXT_START)
+        / f32::from(ADAPTIVE_TEXT_FULL - ADAPTIVE_TEXT_START);
+    ease(t)
 }
 
 /// One cover as a CSS image.
@@ -909,15 +1021,33 @@ struct Veil {
 fn veil(dark: bool, strength: u8) -> Veil {
     if dark {
         Veil {
-            window: (between(0.82, 0.56, strength), between(0.76, 0.52, strength)),
-            bar: (between(0.80, 0.58, strength), between(0.74, 0.52, strength)),
-            sheet: (between(0.88, 0.64, strength), between(0.80, 0.56, strength)),
+            window: (
+                glass_opacity(0.82, 0.638, strength),
+                glass_opacity(0.76, 0.592, strength),
+            ),
+            bar: (
+                glass_opacity(0.80, 0.646, strength),
+                glass_opacity(0.74, 0.586, strength),
+            ),
+            sheet: (
+                glass_opacity(0.88, 0.712, strength),
+                glass_opacity(0.80, 0.632, strength),
+            ),
         }
     } else {
         Veil {
-            window: (between(0.74, 0.54, strength), between(0.68, 0.50, strength)),
-            bar: (between(0.74, 0.54, strength), between(0.68, 0.50, strength)),
-            sheet: (between(0.76, 0.58, strength), between(0.68, 0.52, strength)),
+            window: (
+                glass_opacity(0.74, 0.60, strength),
+                glass_opacity(0.68, 0.554, strength),
+            ),
+            bar: (
+                glass_opacity(0.74, 0.60, strength),
+                glass_opacity(0.68, 0.554, strength),
+            ),
+            sheet: (
+                glass_opacity(0.76, 0.634, strength),
+                glass_opacity(0.68, 0.568, strength),
+            ),
         }
     }
 }
@@ -938,9 +1068,14 @@ fn backdrop_css(image: Option<&str>, dark: bool, strength: u8) -> String {
              background-repeat: no-repeat;"
         )
     };
-    format!(
-        ".jamelade-window {{
-             background-image:
+    let window = if strength >= 100 {
+        format!(
+            "background-image: {image};
+             background-repeat: no-repeat;"
+        )
+    } else {
+        format!(
+            "background-image:
                  linear-gradient(
                      alpha(@window_bg_color, {}),
                      alpha(@window_bg_color, {})
@@ -956,12 +1091,14 @@ fn backdrop_css(image: Option<&str>, dark: bool, strength: u8) -> String {
                      transparent 46%
                  ),
                  {image};
-             background-repeat: no-repeat;
-         }}
+             background-repeat: no-repeat;",
+            veil.window.0, veil.window.1,
+        )
+    };
+    format!(
+        ".jamelade-window {{ {window} }}
          .np-bar {{ {} }}
          .np-sheet {{ {} }}",
-        veil.window.0,
-        veil.window.1,
         layers(veil.bar),
         layers(veil.sheet)
     )
@@ -985,6 +1122,7 @@ pub fn set_backdrop_enabled(on: bool) {
     // about it; a switch should land the moment it is flipped.
     let shown = SHOWN_ART.with(|c| c.borrow().clone());
     paint_backdrop(shown.as_deref().map(image_of));
+    refresh_adaptive_text();
 }
 
 fn paint_backdrop(image: Option<String>) {
@@ -1123,13 +1261,12 @@ mod tests {
     }
 
     #[test]
-    fn a_veil_never_gets_thin_enough_to_lose_the_words() {
-        // The floor is set by text, not by looks: both surfaces carry labels in
-        // the theme's own foreground colour, and a veil thin enough to show a
-        // sleeve's dark half is thin enough to lose them. Rendered against real
-        // covers, below about 0.5 the type stops being readable.
+    fn ordinary_glass_keeps_its_readability_floor() {
+        // Up through the established default, system foreground colours still
+        // sit on the same substantial veil. Beyond it the adaptive outlined
+        // foreground takes over while the veil eases continuously to zero.
         for dark in [false, true] {
-            for strength in [0, 70, 100] {
+            for strength in [0, 70] {
                 let veil = veil(dark, strength);
                 for (top, bottom) in [veil.window, veil.bar, veil.sheet] {
                     assert!(bottom >= 0.5, "veil too thin for text: {bottom}");
@@ -1137,6 +1274,94 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_clear_end_of_the_slider_has_no_opacity_cliff() {
+        for dark in [false, true] {
+            let almost = veil(dark, 99);
+            let clear = veil(dark, 100);
+            for ((near_top, near_bottom), (clear_top, clear_bottom)) in [
+                (almost.window, clear.window),
+                (almost.bar, clear.bar),
+                (almost.sheet, clear.sheet),
+            ] {
+                assert!(near_top > 0.0 && near_top < 0.01);
+                assert!(near_bottom > 0.0 && near_bottom < 0.01);
+                assert_eq!((clear_top, clear_bottom), (0.0, 0.0));
+            }
+        }
+        let almost = material_opacity(99);
+        assert!(almost.header > 0.0 && almost.header < 0.01);
+        assert_eq!(material_opacity(100).header, 0.0);
+        assert_eq!(adaptive_text_blend(77), 0.0);
+        assert!(adaptive_text_blend(78) > 0.0);
+    }
+
+    #[test]
+    fn the_explicit_full_setting_is_actually_clear() {
+        let opacity = material_opacity(100);
+        assert_eq!(opacity.header, 0.0);
+        assert_eq!(opacity.sidebar, 0.0);
+        assert_eq!(opacity.row, 0.0);
+        assert_eq!(opacity.feature, 0.0);
+        for dark in [false, true] {
+            let veil = veil(dark, 100);
+            assert_eq!(veil.window, (0.0, 0.0));
+            assert_eq!(veil.bar, (0.0, 0.0));
+            assert_eq!(veil.sheet, (0.0, 0.0));
+        }
+        assert!(material_css(100).contains("background-image: none"));
+        let backdrop = backdrop_css(Some("url(\"cover\")"), true, 100);
+        assert_eq!(backdrop.matches("url(\"cover\")").count(), 3);
+        assert!(!backdrop.contains("--glass-primary-color"));
+        assert!(!backdrop.contains("--glass-secondary-color"));
+    }
+
+    #[test]
+    fn adaptive_text_uses_opposing_foreground_and_shadow() {
+        let dark = adaptive_text_css(
+            AlbumPalette {
+                primary: crate::palette::Rgb { r: 8, g: 9, b: 12 },
+                secondary: crate::palette::Rgb {
+                    r: 24,
+                    g: 18,
+                    b: 20,
+                },
+            },
+            1.0,
+        );
+        assert!(dark.contains("--art-target-color: #ffffff"));
+        assert!(dark.contains("--art-fg-color: mix("));
+        assert!(dark.contains("--art-shadow-color: #08090b"));
+
+        let light = adaptive_text_css(
+            AlbumPalette {
+                primary: crate::palette::Rgb {
+                    r: 246,
+                    g: 240,
+                    b: 228,
+                },
+                secondary: crate::palette::Rgb {
+                    r: 220,
+                    g: 232,
+                    b: 244,
+                },
+            },
+            1.0,
+        );
+        assert!(light.contains("--art-target-color: #111216"));
+        assert!(light.contains("--art-shadow-color: #ffffff"));
+    }
+
+    #[test]
+    fn adaptive_text_blends_smoothly_before_becoming_opaque() {
+        let samples = [77, 78, 80, 85, 90, 92].map(adaptive_text_blend);
+        assert_eq!(samples[0], 0.0);
+        assert_eq!(samples[5], 1.0);
+        assert!(samples.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(samples[1] < 0.05, "the first visible step must be subtle");
+        assert!((0.45..0.65).contains(&samples[3]));
     }
 
     #[test]

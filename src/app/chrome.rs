@@ -256,11 +256,7 @@ pub(super) fn show_about(parent: &adw::ApplicationWindow) {
              Playback runs through Apple's own MusicKit player using Google's \
              Widevine CDM, in a hidden helper process. Jamelade is an unofficial \
              community fork of Slipmat and requires an active Apple Music \
-             subscription and an internet connection. It is not approved by \
-             Apple, can stop working if Apple changes or blocks its web service, \
-             and remains subject to Apple's service terms.\n\n\
-             Apple and Apple Music are trademarks of Apple Inc., registered in \
-             the U.S. and other countries.",
+             subscription and an internet connection.",
         )
         .build();
     about.present(Some(parent));
@@ -345,10 +341,7 @@ impl AppModel {
             .title("Welcome to Jamelade")
             .description(
                 "Jamelade plays your Apple Music library as a native Linux app. \
-                 It needs an active Apple Music subscription. This unofficial \
-                 client is not approved by Apple, may stop working if Apple \
-                 changes or blocks its web service, and remains subject to \
-                 Apple's service terms.",
+                 It needs an active Apple Music subscription.",
             )
             .build();
 
@@ -555,8 +548,8 @@ impl AppModel {
         appearance.add(&backdrop);
 
         let glass_row = adw::ActionRow::builder()
-            .title("Transparency & Blur")
-            .subtitle("Higher values reveal more album art and soften it further")
+            .title("Transparency &amp; Blur")
+            .subtitle("Higher values reveal more album art; 100 is fully clear")
             .build();
         let glass = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 5.0);
         glass.set_value(f64::from(self.settings.glass_strength));
@@ -565,7 +558,7 @@ impl AppModel {
         glass.set_value_pos(gtk::PositionType::Right);
         glass.set_width_request(190);
         glass.set_valign(gtk::Align::Center);
-        glass.set_tooltip_text(Some("Subtle glass to most transparent and blurred"));
+        glass.set_tooltip_text(Some("Subtle glass to fully clear at 100"));
         {
             let sender = sender.clone();
             glass.connect_value_changed(move |scale| {
@@ -683,7 +676,7 @@ impl AppModel {
 
         let reduced_motion = adw::SwitchRow::builder()
             .title("Reduce Jamkin Motion")
-            .subtitle("Uses a still pose and makes OLED-care moves instant")
+            .subtitle("Uses a still pose and makes Edge Walk moves instant")
             .active(self.settings.jamkin_reduced_motion)
             .build();
         {
@@ -757,7 +750,7 @@ impl AppModel {
             gtk::Orientation::Horizontal,
             f64::from(crate::settings::MIN_DESKTOP_JAMKIN_SIZE),
             f64::from(crate::settings::MAX_DESKTOP_JAMKIN_SIZE),
-            8.0,
+            1.0,
         );
         size.set_value(f64::from(self.settings.desktop_jamkin_size));
         size.set_digits(0);
@@ -769,7 +762,7 @@ impl AppModel {
         {
             let sender = sender.clone();
             size.connect_value_changed(move |scale| {
-                let pixels = ((scale.value() / 8.0).round() * 8.0) as u16;
+                let pixels = scale.value().round() as u16;
                 sender.input(AppMsg::SetDesktopJamkinSize(pixels));
             });
         }
@@ -819,10 +812,10 @@ impl AppModel {
             .build();
         jamkin.add(&keep_above);
 
-        let oled_care = adw::SwitchRow::builder()
-            .title("OLED Care")
+        let edge_walk = adw::SwitchRow::builder()
+            .title("Edge Walk")
             .subtitle(if above_supported {
-                "Dims the Jamkin, walks screen edges, and changes corners periodically"
+                "Periodically walks screen edges and changes corners to reduce static OLED wear"
             } else {
                 "Unavailable here because this desktop cannot position an overlay"
             })
@@ -831,10 +824,10 @@ impl AppModel {
             .build();
         {
             let sender = sender.clone();
-            let oled_care = oled_care.clone();
+            let edge_walk = edge_walk.clone();
             keep_above.connect_active_notify(move |row| {
-                if !row.is_active() && oled_care.is_active() {
-                    oled_care.set_active(false);
+                if !row.is_active() && edge_walk.is_active() {
+                    edge_walk.set_active(false);
                 }
                 sender.input(AppMsg::SetDesktopJamkinAbove(row.is_active()));
             });
@@ -842,14 +835,14 @@ impl AppModel {
         {
             let sender = sender.clone();
             let keep_above = keep_above.clone();
-            oled_care.connect_active_notify(move |row| {
+            edge_walk.connect_active_notify(move |row| {
                 if row.is_active() && !keep_above.is_active() {
                     keep_above.set_active(true);
                 }
                 sender.input(AppMsg::SetDesktopJamkinOledCare(row.is_active()));
             });
         }
-        jamkin.add(&oled_care);
+        jamkin.add(&edge_walk);
 
         // No group description. It carried a caveat about notifications needing
         // the app to be installed, which is a **developer's** problem — anyone
@@ -928,6 +921,7 @@ impl AppModel {
             });
         }
         privacy.add(&lyrics);
+
         page.add(&appearance);
         page.add(&jamkin);
         page.add(&notifications);

@@ -635,6 +635,7 @@ mod tests {
             duration_ms: 200_000,
             track_number: 1,
             artwork: None,
+            share_url: None,
         }
     }
 
@@ -711,6 +712,7 @@ mod tests {
                 name: "Aitana".into(),
                 artwork: None,
                 genres: String::new(),
+                biography: String::new(),
                 library: false,
             }),
             Entry::Album(Album {
@@ -722,6 +724,7 @@ mod tests {
                 year: "2020".into(),
                 library: false,
                 track_count: 12,
+                share_url: None,
             }),
             song("a", Some("1")),
             song("b", Some("2")),
@@ -777,6 +780,7 @@ mod tests {
                 year: "2020".into(),
                 library: false,
                 track_count: 12,
+                share_url: None,
             }),
             song("a", Some("1")),
         ];

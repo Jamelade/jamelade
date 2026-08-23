@@ -148,6 +148,7 @@ impl AppModel {
             RepeatMode::One => Repeat::One,
         };
         let snap = Snapshot {
+            catalog_id: item.and_then(|item| item.catalog_id.clone().or_else(|| item.id.clone())),
             shuffle: self.player.shuffle,
             queue_open: self.show_queue,
             lyrics_open: self.view == super::View::Lyrics,
@@ -189,6 +190,8 @@ impl AppModel {
         });
         self.player_view
             .emit(PlayerViewInput::Sync(Box::new(snap.clone())));
+        self.player_view
+            .emit(PlayerViewInput::SegmentLoop(self.segment_loop.marks()));
         self.now_playing.emit(NowPlayingInput::Sync(Box::new(snap)));
 
         // The queue dialog reads MusicKit's queue, not our library list. The

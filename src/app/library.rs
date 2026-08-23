@@ -725,6 +725,7 @@ mod tests {
             duration_ms: 200_000,
             track_number: 1,
             artwork: None,
+            share_url: None,
         }
     }
 
@@ -746,6 +747,7 @@ mod tests {
                     year: String::new(),
                     library: false,
                     track_count: 1,
+                    share_url: None,
                 })
                 .collect(),
             artists: (0..artists)
@@ -754,6 +756,7 @@ mod tests {
                     name: format!("ar{i}"),
                     artwork: None,
                     genres: String::new(),
+                    biography: String::new(),
                     library: false,
                 })
                 .collect(),
@@ -767,6 +770,7 @@ mod tests {
                     description: String::new(),
                     artwork: None,
                     mosaic_artwork: Vec::new(),
+                    share_url: None,
                     library: false,
                 })
                 .collect(),

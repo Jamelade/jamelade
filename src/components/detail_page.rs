@@ -23,7 +23,9 @@ use relm4::gtk::prelude::*;
 use relm4::typed_view::list::TypedListView;
 use relm4::{adw, gtk};
 
+use crate::components::artist_view::{ArtistActivate, ArtistView};
 use crate::components::cover::Cover;
+use crate::components::grid_item::ArtRequest;
 use crate::components::track_row::{Entry, LibraryItem, LibraryRowWidgets};
 use crate::components::{CurrentTrack, DeadTracks, RowRegistry, TrackOverrides};
 use crate::music::types::{Album, Artist, Artwork, Playlist};
@@ -116,11 +118,24 @@ pub struct RowState {
     pub overrides: TrackOverrides,
 }
 
+pub struct DetailActions {
+    pub activate: Box<dyn Fn(usize)>,
+    pub play: Box<dyn Fn()>,
+    pub shuffle: Box<dyn Fn()>,
+    pub copy_link: Box<dyn Fn()>,
+    pub request_art: ArtRequest,
+    pub artist_activate: Box<dyn Fn(ArtistActivate)>,
+    pub toggle_sidebar: Box<dyn Fn()>,
+}
+
 pub struct DetailPage {
     /// Stable for the page's whole life. Clicks quote it back.
     pub id: u64,
     /// What the list currently shows. The caller reads this to build a queue.
     pub entries: Vec<Entry>,
+    pub artist_songs: Vec<crate::music::types::Track>,
+    pub artist_latest_release: Option<Album>,
+    pub artist_albums: Vec<Album>,
 
     page: adw::NavigationPage,
     list: TypedListView<LibraryItem, gtk::NoSelection>,
@@ -130,11 +145,14 @@ pub struct DetailPage {
     header: adw::HeaderBar,
     sidebar_toggle: gtk::ToggleButton,
     stack: gtk::Stack,
+    artist_view: ArtistView,
     cover: Cover,
     title: gtk::Label,
     subtitle: gtk::Label,
     meta: gtk::Label,
     actions: gtk::Box,
+    copy_link: gtk::Button,
+    share_link: Option<String>,
     error: adw::StatusPage,
     empty: adw::StatusPage,
 }
@@ -145,15 +163,16 @@ impl DetailPage {
     ///
     /// `on_activate` is handed the row index that was clicked; `on_play` and
     /// `on_shuffle` fire for the header's two buttons.
-    pub fn new(
-        id: u64,
-        heading: &str,
-        state: RowState,
-        on_activate: impl Fn(usize) + 'static,
-        on_play: impl Fn() + 'static,
-        on_shuffle: impl Fn() + 'static,
-        on_toggle_sidebar: impl Fn() + 'static,
-    ) -> Self {
+    pub fn new(id: u64, heading: &str, state: RowState, actions: DetailActions) -> Self {
+        let DetailActions {
+            activate: on_activate,
+            play: on_play,
+            shuffle: on_shuffle,
+            copy_link: on_copy_link,
+            request_art,
+            artist_activate: on_artist_activate,
+            toggle_sidebar: on_toggle_sidebar,
+        } = actions;
         let list: TypedListView<LibraryItem, gtk::NoSelection> = TypedListView::new();
         let view = list.view.clone();
         view.set_single_click_activate(true);
@@ -202,6 +221,14 @@ impl DetailPage {
             .build();
         shuffle.connect_clicked(move |_| on_shuffle());
 
+        let copy_link = gtk::Button::builder()
+            .icon_name("edit-copy-symbolic")
+            .tooltip_text("Copy Apple Music link")
+            .css_classes(["pill"])
+            .visible(false)
+            .build();
+        copy_link.connect_clicked(move |_| on_copy_link());
+
         // One box so both appear and disappear together — a Shuffle button
         // beside nothing is as useless as a Play button beside nothing.
         let actions = gtk::Box::builder()
@@ -211,6 +238,7 @@ impl DetailPage {
             .build();
         actions.append(&play);
         actions.append(&shuffle);
+        actions.append(&copy_link);
 
         let banner = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -236,6 +264,7 @@ impl DetailPage {
             .hscrollbar_policy(gtk::PolicyType::Never)
             .child(&adw::Clamp::builder().maximum_size(800).child(&body).build())
             .build();
+        let artist_view = ArtistView::new(request_art, on_artist_activate);
 
         let spinner = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -265,6 +294,7 @@ impl DetailPage {
         let stack = gtk::Stack::new();
         stack.add_named(&spinner, Some("loading"));
         stack.add_named(&content, Some("content"));
+        stack.add_named(artist_view.widget(), Some("artist"));
         stack.add_named(&error, Some("error"));
         stack.add_named(&empty, Some("empty"));
         stack.set_visible_child_name("loading");
@@ -300,6 +330,9 @@ impl DetailPage {
         Self {
             id,
             entries: Vec::new(),
+            artist_songs: Vec::new(),
+            artist_latest_release: None,
+            artist_albums: Vec::new(),
             page,
             list,
             state,
@@ -308,10 +341,13 @@ impl DetailPage {
             header,
             sidebar_toggle,
             stack,
+            artist_view,
             title,
             subtitle,
             meta,
             actions,
+            copy_link,
+            share_link: None,
             error,
             empty,
         }
@@ -346,6 +382,7 @@ impl DetailPage {
 
     /// Fill an album page: cover, artist, year, and its tracks.
     pub fn show_album(&mut self, album: &Album, tracks: Vec<Entry>) {
+        self.set_share_link(album.share_url.clone());
         self.cover.square("media-optical-symbolic");
         self.head(&album.name, &album.artist, album.artwork.as_ref());
 
@@ -378,6 +415,7 @@ impl DetailPage {
 
     /// Fill a playlist page: cover, curator or blurb, and its tracks.
     pub fn show_playlist(&mut self, playlist: &Playlist, tracks: Vec<Entry>) {
+        self.set_share_link(playlist.share_url.clone());
         self.cover.square("view-list-symbolic");
         // **The curator, or nothing.** Deliberately *not* the description as a
         // fallback — the same rule the tile already follows, and for a stronger
@@ -404,23 +442,22 @@ impl DetailPage {
     }
 
     /// Fill an artist page: portrait, genres, and their albums.
-    pub fn show_artist(&mut self, artist: &Artist, albums: Vec<Entry>) {
-        // A round portrait, the way every other GNOME app shows a person —
-        // and an `adw::Avatar`, which is the only way to actually get one. See
-        // `components::cover`.
-        self.cover.round(&artist.name);
-        self.head(&artist.name, &artist.genres, artist.artwork.as_ref());
-
-        let count = albums.len();
-        self.meta.set_label(&format!(
-            "{count} {}",
-            if count == 1 { "album" } else { "albums" }
-        ));
-        self.meta.set_visible(count > 0);
-
-        self.empty
-            .set_description(Some("Apple Music lists no albums for this artist."));
-        self.fill(albums);
+    pub fn show_artist(
+        &mut self,
+        artist: &Artist,
+        top_songs: Vec<crate::music::types::Track>,
+        latest_release: Option<Album>,
+        albums: Vec<Album>,
+    ) {
+        self.set_share_link(None);
+        adw::prelude::NavigationPageExt::set_title(&self.page, &artist.name);
+        self.entries.clear();
+        self.artist_view
+            .show(artist, &top_songs, latest_release.as_ref(), &albums);
+        self.artist_songs = top_songs;
+        self.artist_latest_release = latest_release;
+        self.artist_albums = albums;
+        self.stack.set_visible_child_name("artist");
     }
 
     fn head(&mut self, title: &str, subtitle: &str, artwork: Option<&Artwork>) {
@@ -460,8 +497,9 @@ impl DetailPage {
         // Only offer them where there is something to play — an artist page
         // lists albums, and a Play button that does nothing is a bug you have
         // to click to find.
-        self.actions
-            .set_visible(entries.iter().any(|e| e.catalog_id().is_some()));
+        self.actions.set_visible(
+            entries.iter().any(|e| e.catalog_id().is_some()) || self.share_link.is_some(),
+        );
 
         let anything = !entries.is_empty();
         self.entries = entries;
@@ -469,11 +507,24 @@ impl DetailPage {
             .set_visible_child_name(if anything { "content" } else { "empty" });
     }
 
+    fn set_share_link(&mut self, link: Option<String>) {
+        self.share_link = link;
+        self.copy_link.set_visible(self.share_link.is_some());
+    }
+
+    pub fn share_link(&self) -> Option<&str> {
+        self.share_link.as_deref()
+    }
+
     /// Show the cover, once it has been fetched to disk.
     pub fn set_artwork(&self, path: &std::path::Path) {
         if path.is_file() {
             self.cover.set_file(path);
         }
+    }
+
+    pub fn paint_artist_art(&self, key: &str, texture: &gtk::gdk::MemoryTexture) -> usize {
+        self.artist_view.paint(key, texture)
     }
 
     pub fn fail(&self, message: &str) {
@@ -498,6 +549,7 @@ mod tests {
             artwork: None,
             year: "2020".into(),
             track_count: 12,
+            share_url: None,
             library: false,
         };
         assert_eq!(PageKind::album(&album), PageKind::Album("1234".into()));
@@ -513,6 +565,7 @@ mod tests {
             name: "Aitana".into(),
             artwork: None,
             genres: String::new(),
+            biography: String::new(),
             library: false,
         };
         assert_eq!(PageKind::artist(&artist), PageKind::Artist("9".into()));

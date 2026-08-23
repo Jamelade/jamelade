@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: 2026 Jamelade contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+[package]
+name = "jamelade-icon-helper"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+[dependencies]
+zbus = "=5.18.0"

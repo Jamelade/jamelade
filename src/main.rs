@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 mod app;
+mod apple_link;
 mod companion;
 mod components;
 mod discord;
@@ -14,6 +15,7 @@ mod notify;
 mod palette;
 mod player;
 mod private_storage;
+mod segment_loop;
 mod session;
 mod settings;
 mod style;

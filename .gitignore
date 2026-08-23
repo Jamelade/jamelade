@@ -1,4 +1,5 @@
 /target
+/icon-helper/target
 /sidecar/node_modules
 
 # Local developer configuration and credential material never belongs in a

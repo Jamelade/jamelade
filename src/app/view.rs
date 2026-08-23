@@ -762,6 +762,7 @@ mod tests {
             duration_ms: 0,
             track_number: n,
             artwork: None,
+            share_url: None,
         }
     }
 

@@ -47,6 +47,18 @@ impl Rgb {
             / 255.0
     }
 
+    fn relative_luminance(self) -> f32 {
+        let linear = |channel: u8| {
+            let channel = f32::from(channel) / 255.0;
+            if channel <= 0.04045 {
+                channel / 12.92
+            } else {
+                ((channel + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(self.r) + 0.7152 * linear(self.g) + 0.0722 * linear(self.b)
+    }
+
     fn saturation(self) -> f32 {
         let high = self.r.max(self.g).max(self.b);
         let low = self.r.min(self.g).min(self.b);
@@ -98,6 +110,16 @@ impl AlbumPalette {
             primary: self.primary.mix(other.primary, t),
             secondary: self.secondary.mix(other.secondary, t),
         }
+    }
+
+    /// Whether the cover needs a light foreground. Mixed artwork deliberately
+    /// biases light: white copy with a dark outline remains legible across a
+    /// bright patch, while dark copy can disappear completely into the dark
+    /// half before its pale outline is noticed.
+    pub fn prefers_light_foreground(self) -> bool {
+        let primary = self.primary.relative_luminance();
+        let secondary = self.secondary.relative_luminance();
+        primary.min(secondary) < 0.24 || (primary + secondary) / 2.0 < 0.36
     }
 
     fn encode(self) -> String {
@@ -384,5 +406,48 @@ mod tests {
         assert_eq!(a.interpolate(b, 1.0), b);
         assert_eq!(a.interpolate(b, -1.0), a);
         assert_eq!(a.interpolate(b, 2.0), b);
+    }
+
+    #[test]
+    fn dark_and_light_covers_choose_opposite_foregrounds() {
+        let dark = AlbumPalette {
+            primary: Rgb { r: 8, g: 9, b: 12 },
+            secondary: Rgb {
+                r: 28,
+                g: 20,
+                b: 24,
+            },
+        };
+        let light = AlbumPalette {
+            primary: Rgb {
+                r: 244,
+                g: 238,
+                b: 226,
+            },
+            secondary: Rgb {
+                r: 220,
+                g: 230,
+                b: 242,
+            },
+        };
+        assert!(dark.prefers_light_foreground());
+        assert!(!light.prefers_light_foreground());
+    }
+
+    #[test]
+    fn a_split_bright_and_dark_cover_prefers_white() {
+        let mixed = AlbumPalette {
+            primary: Rgb {
+                r: 238,
+                g: 236,
+                b: 224,
+            },
+            secondary: Rgb {
+                r: 24,
+                g: 22,
+                b: 18,
+            },
+        };
+        assert!(mixed.prefers_light_foreground());
     }
 }

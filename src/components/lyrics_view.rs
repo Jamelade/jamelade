@@ -442,7 +442,7 @@ impl LyricsView {
     /// These files ship with Jamelade; no network lookup is involved.
     pub fn set_companion(&self, companion: Companion) {
         self.companion_name
-            .set_label(&format!("{} is singing along with you", companion.label()));
+            .set_label(&format!("{} is singing along with you!", companion.label()));
         self.companion_actor.set_companion(companion);
     }
 

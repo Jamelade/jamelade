@@ -11,7 +11,9 @@
 use relm4::ComponentSender;
 use relm4::adw::prelude::NavigationPageExt;
 
-use super::{ART_SIZE, AppModel, AppMsg, CommandMsg, DetailPage, PageKind, RowState, artwork};
+use super::{
+    ART_SIZE, AppModel, AppMsg, CommandMsg, DetailActions, DetailPage, PageKind, RowState, artwork,
+};
 
 /// How somebody reached a page, which is the only thing that distinguishes the
 /// two once it is on screen.
@@ -102,6 +104,8 @@ impl AppModel {
         let activate = sender.clone();
         let play = sender.clone();
         let shuffle = sender.clone();
+        let copy_link = sender.clone();
+        let artist_activate = sender.clone();
         let sidebar = sender.clone();
         let page = DetailPage::new(
             id,
@@ -111,20 +115,29 @@ impl AppModel {
                 current: self.current_track.clone(),
                 dead: self.dead_rows.clone(),
             },
-            move |row| activate.input(AppMsg::DetailActivated { page: id, row }),
-            move || {
-                play.input(AppMsg::PlayPage {
-                    page: id,
-                    shuffle: false,
-                })
+            DetailActions {
+                activate: Box::new(move |row| {
+                    activate.input(AppMsg::DetailActivated { page: id, row })
+                }),
+                play: Box::new(move || {
+                    play.input(AppMsg::PlayPage {
+                        page: id,
+                        shuffle: false,
+                    })
+                }),
+                shuffle: Box::new(move || {
+                    shuffle.input(AppMsg::PlayPage {
+                        page: id,
+                        shuffle: true,
+                    })
+                }),
+                copy_link: Box::new(move || copy_link.input(AppMsg::CopyPageLink { page: id })),
+                request_art: self.tile_art_request.clone(),
+                artist_activate: Box::new(move |target| {
+                    artist_activate.input(AppMsg::ArtistActivatedOnPage { page: id, target })
+                }),
+                toggle_sidebar: Box::new(move || sidebar.input(AppMsg::ToggleSidebar)),
             },
-            move || {
-                shuffle.input(AppMsg::PlayPage {
-                    page: id,
-                    shuffle: true,
-                })
-            },
-            move || sidebar.input(AppMsg::ToggleSidebar),
         );
         page.set_end_controls(true);
 

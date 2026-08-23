@@ -23,6 +23,7 @@ use relm4::prelude::*;
 use super::{PlayerView, PlayerViewInput};
 use crate::components::now_playing::{Repeat, VOLUME_STEP, mode_opacity, volume_is_new};
 use crate::music::types::format_duration;
+use crate::segment_loop::LoopMarks;
 
 /// The widest the scrubber may get before it stops growing and centres.
 const SCRUB_MAX_W: i32 = 520;
@@ -106,6 +107,13 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
         .tooltip_text("Queue")
         .css_classes(["flat", "circular"])
         .build();
+    let segment_loop = gtk::Button::builder()
+        .label("A–B")
+        .tooltip_text("Loop a section: set point A")
+        .css_classes(["flat", "pill", "segment-loop"])
+        .build();
+    let copy_link = button("edit-copy-symbolic", ["flat", "circular"]);
+    copy_link.set_tooltip_text(Some("Copy Apple Music link"));
 
     // **Volume lives here now.** The bar drops its own below the narrow
     // breakpoint, and shuffle and repeat were already down here to fall back
@@ -137,6 +145,16 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
             // what the `set_active` below arrives as — the #37 guard.
             sender.input(PlayerViewInput::SetQueueShown(b.is_active()));
         });
+    }
+    {
+        let sender = sender.clone();
+        segment_loop.connect_clicked(move |_| {
+            sender.input(PlayerViewInput::SegmentLoopClicked);
+        });
+    }
+    {
+        let sender = sender.clone();
+        copy_link.connect_clicked(move |_| sender.input(PlayerViewInput::CopyLink));
     }
 
     for (widget, msg) in [
@@ -170,6 +188,8 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
         .spacing(6)
         .build();
     queue_row.append(&queue);
+    queue_row.append(&segment_loop);
+    queue_row.append(&copy_link);
     queue_row.append(&volume);
     into.append(&queue_row);
 
@@ -185,6 +205,9 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
         volume_handler,
         shuffle,
         repeat,
+        segment_loop,
+        copy_link,
+        shown_loop: std::cell::Cell::new(LoopMarks::Off),
     }
 }
 
@@ -201,6 +224,9 @@ pub(super) struct Bits {
     volume_handler: relm4::gtk::glib::SignalHandlerId,
     shuffle: gtk::Button,
     repeat: gtk::Button,
+    segment_loop: gtk::Button,
+    copy_link: gtk::Button,
+    shown_loop: std::cell::Cell<LoopMarks>,
 }
 
 impl PlayerView {
@@ -240,6 +266,8 @@ impl PlayerView {
         });
         bits.repeat
             .set_opacity(mode_opacity(!matches!(self.snap.repeat, Repeat::Off)));
+        bits.segment_loop.set_sensitive(self.snap.duration_ms > 0);
+        bits.copy_link.set_sensitive(self.snap.catalog_id.is_some());
         bits.next.set_sensitive(self.snap.has_next);
         // **Silenced while we write.** GTK cannot tell a programmatic write
         // from a drag, and `sender.input` queues — so an unsilenced write comes
@@ -251,6 +279,52 @@ impl PlayerView {
             bits.volume.block_signal(&bits.volume_handler);
             bits.volume.set_value(self.snap.volume);
             bits.volume.unblock_signal(&bits.volume_handler);
+        }
+    }
+
+    pub(super) fn refresh_segment_loop(&self, marks: LoopMarks) {
+        let Some(bits) = self.bits.as_ref() else {
+            return;
+        };
+        bits.segment_loop
+            .set_opacity(mode_opacity(!matches!(marks, LoopMarks::Off)));
+        match marks {
+            LoopMarks::Off => {
+                bits.segment_loop.set_label("A–B");
+                bits.segment_loop
+                    .set_tooltip_text(Some("Loop a section: set point A"));
+            }
+            LoopMarks::Start(start_ms) => {
+                bits.segment_loop.set_label("A…");
+                bits.segment_loop.set_tooltip_text(Some(&format!(
+                    "Point A set at {} — play or scrub to point B",
+                    format_duration(start_ms)
+                )));
+            }
+            LoopMarks::Active { start_ms, end_ms } => {
+                bits.segment_loop.set_label("A–B");
+                bits.segment_loop.set_tooltip_text(Some(&format!(
+                    "Looping {}–{} — click to clear",
+                    format_duration(start_ms),
+                    format_duration(end_ms)
+                )));
+            }
+        }
+        if bits.shown_loop.replace(marks) != marks {
+            bits.scale.clear_marks();
+            match marks {
+                LoopMarks::Off => {}
+                LoopMarks::Start(start_ms) => {
+                    bits.scale
+                        .add_mark(start_ms as f64, gtk::PositionType::Bottom, Some("A"));
+                }
+                LoopMarks::Active { start_ms, end_ms } => {
+                    bits.scale
+                        .add_mark(start_ms as f64, gtk::PositionType::Bottom, Some("A"));
+                    bits.scale
+                        .add_mark(end_ms as f64, gtk::PositionType::Bottom, Some("B"));
+                }
+            }
         }
     }
 }

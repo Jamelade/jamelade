@@ -191,6 +191,7 @@ fn slices_within_limits(
             string_within(&artist.id, CACHE_MAX_ID_BYTES)
                 && string_within(&artist.name, CACHE_MAX_TEXT_BYTES)
                 && string_within(&artist.genres, CACHE_MAX_TEXT_BYTES)
+                && string_within(&artist.biography, CACHE_MAX_TEXT_BYTES)
                 && artwork_within(artist.artwork.as_ref())
         })
         && playlists.iter().all(|playlist| {
@@ -245,6 +246,7 @@ mod tests {
             duration_ms: 328_000,
             track_number: 1,
             artwork: Some(Artwork::new("https://x/{w}x{h}bb.jpg")),
+            share_url: None,
         }
     }
 
@@ -272,6 +274,7 @@ mod tests {
                 artwork: Some(Artwork::new("https://y/{w}x{h}bb.jpg")),
                 year: "2011".into(),
                 track_count: 8,
+                share_url: None,
                 library: true,
             }],
             artists: vec![Artist {
@@ -279,6 +282,7 @@ mod tests {
                 name: "Radiohead".into(),
                 artwork: None,
                 genres: "Alternative".into(),
+                biography: String::new(),
                 library: true,
             }],
             playlists: vec![Playlist {
@@ -290,6 +294,7 @@ mod tests {
                 description: String::new(),
                 artwork: None,
                 mosaic_artwork: Vec::new(),
+                share_url: None,
                 library: true,
             }],
         };
@@ -372,6 +377,7 @@ mod tests {
             description: String::new(),
             artwork: None,
             mosaic_artwork: Vec::new(),
+            share_url: None,
             library: true,
         };
         playlist.mosaic_artwork = vec![

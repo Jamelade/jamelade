@@ -18,8 +18,8 @@ Jamelade is an unofficial community fork of
 [Slipmat](https://github.com/SoftARV/Slipmat). It keeps Slipmat's native
 GTK4/libadwaita library and player, then builds a more personal desktop
 experience around it: Apple Music Home and Explore, synchronized lyrics,
-album-aware glass styling, optional Discord activity, and three project-created
-Jamkin companions—**JamBun**, **JamPam**, and **JamJoe**.
+rich artist pages, album-aware glass styling, optional Discord activity, and
+three project-created Jamkin companions—**JamBun**, **JamPam**, and **JamJoe**.
 
 Jamelade is not affiliated with or endorsed by Apple Inc. or the upstream
 Slipmat project. An active Apple Music subscription is required.
@@ -32,6 +32,12 @@ Explore presents the recommendation groups Apple exposes to the signed-in
 account, alongside recent listening, heavy rotation, radio, and storefront
 charts. The shelves are native widgets rather than an embedded copy of Apple's
 website.
+
+### Rich artist pages
+
+Artist pages combine the latest release, top songs, albums, and the biography
+Apple supplies at runtime. Select the artist portrait to open or close the
+biography without leaving the page.
 
 ### Live lyrics with privacy-first fallbacks
 
@@ -65,18 +71,31 @@ on the desktop as a small animated pet.
   </tr>
 </table>
 
-The optional Desktop Jamkin dances during playback, shows lyrics on hover, and
-remembers its position and size. Controls cover opacity, reduced motion,
+The Desktop Jamkin dances during playback, keeps lyrics visible while hovered,
+and remembers its position and size. Controls cover opacity, reduced motion,
 quality, persistence, always-on-top behavior on compatible Wayland desktops,
-and periodic movement for OLED care. Jamkin features are local and account-free.
+and **Edge Walk**, which periodically moves it around screen edges for OLED
+care. Fresh installs start with JamBun at 175 px; saved preferences always win
+on later launches. Jamkin features are local and account-free.
 
 ### Album-aware glass
 
 The player, navigation, and controls derive their palette from the current
 cover art. Blur and transparency are adjustable, while the selected Jamkin
-provides a consistent accent palette. Playlist artwork that Apple does not
-supply is composed locally from the playlist's album covers. Jamelade follows
-the desktop's normal interface font and does not bundle or select Apple's SF Pro.
+provides a consistent accent palette. The control blends continuously from
+blurred glass to clear artwork, with adaptive foreground contrast near the
+clear end. Playlist artwork that Apple does not supply is composed locally
+from the playlist's album covers. Jamelade follows the desktop's normal
+interface font and does not bundle or select Apple's SF Pro.
+
+### Native navigation, links, and focused looping
+
+Artist and album names in the expanded player open their native Jamelade
+pages. Song, album, and playlist menus can copy or share public Apple Music
+links without exposing an Apple session. The expanded player also has a
+process-local **A–B** control for repeating a chosen section; it does not alter
+the normal queue repeat mode or write loop points to disk. See
+[A–B loop](docs/AB_LOOP.md).
 
 ### Optional Discord Rich Presence
 
@@ -103,11 +122,25 @@ session is memory-only. Optional integrations never receive Apple credentials.
 | Apple Music | Required for playback | Sign-in, library, catalogue, playback, and first-party lyric requests go to Apple; lyrics add only the playing catalog ID |
 | LRCLIB lyrics | Off | Track title, artist, album, duration, and the requester's IP address |
 | Discord activity | Off | Selected song metadata and Jamkin are handed to the local Discord client; Discord then applies its own privacy settings |
-| Desktop Jamkin | Off | Nothing extra; it reuses local playback and lyric state |
+| Desktop Jamkin | On | Nothing extra; it reuses local playback and lyric state |
 | Glass palette and playlist collages | Local | Nothing; both are generated and cached on the device |
 
 Turning a network feature off stops its requests. Jamelade has no analytics,
 advertising SDK, or Jamelade account.
+
+### Optional launcher-icon helper
+
+The app can use the desktop's standard confirmation portal to change its
+Jamkin launcher tile. For a direct change without creating a second launcher,
+an optional per-user helper can be installed separately from a source checkout:
+
+```bash
+./scripts/icon-helper.sh install
+```
+
+It accepts only `JamBun`, `JamPam`, or `JamJoe`, writes only Jamelade's fixed
+launcher entry, and has no network access. Remove it with
+`./scripts/icon-helper.sh uninstall`; the portal remains available without it.
 
 ## Install
 

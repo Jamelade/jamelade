@@ -191,6 +191,11 @@ impl AppModel {
     }
 
     pub(super) fn on_event(&mut self, event: Event, sender: &ComponentSender<Self>) {
+        // MusicKit emits this only when the current media item changes. A-B
+        // marks belong to one item and must never carry into the next one.
+        if matches!(&event, Event::NowPlaying { .. }) {
+            self.clear_segment_loop();
+        }
         match &event {
             // Bound as `shown`, not `debug`: inside a tracing macro the name
             // `debug` resolves to `tracing::field::debug` instead of our
@@ -402,6 +407,7 @@ impl AppModel {
             });
         }
         self.sync_tick(sender);
+        self.sync_segment_loop_timer(sender);
         self.push_snapshot();
         // After the mirror has the new queue, confirm MusicKit put us on the
         // track that was actually clicked.

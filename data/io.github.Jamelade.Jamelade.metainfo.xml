@@ -15,10 +15,13 @@
     <ul>
       <li>songs, albums, artists, playlists and catalogue search</li>
       <li>personal recommendations, radio stations, listening history and storefront charts</li>
-      <li>optional lyrics with separate privacy opt-ins for each third-party source</li>
+      <li>rich native artist pages with releases, top songs, albums and biographies</li>
+      <li>Apple lyrics with a separately opt-in LRCLIB fallback</li>
+      <li>public Apple Music links and a process-local A–B section loop</li>
       <li>three local Jamkin companions with matching accessible colour themes and optional playback animation</li>
       <li>a resizable movable Desktop Jamkin with uncluttered synchronized lyrics on hover</li>
-      <li>selectable Jamkin launcher tiles confirmed and installed by the desktop portal</li>
+      <li>continuous album-art glass with adaptive foreground contrast</li>
+      <li>selectable Jamkin launcher tiles through the desktop portal or an optional narrow local helper</li>
       <li>MPRIS controls for Plasma, GNOME and other Linux desktops</li>
     </ul>
     <p>An active Apple Music subscription and an internet connection are required.</p>

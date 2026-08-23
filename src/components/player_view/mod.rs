@@ -23,6 +23,7 @@ use relm4::prelude::*;
 use self::transport::{Bits, build_transport};
 use super::cover::{Cover, SWAP_MS};
 use super::now_playing::{NowPlayingOutput, Snapshot};
+use crate::segment_loop::LoopMarks;
 
 mod transport;
 
@@ -216,16 +217,14 @@ const WIDE_PX: i32 = 860;
 const ART_LARGE: i32 = 260;
 const ART_THUMB: i32 = 72;
 
-/// How long the queue takes to slide in or out, and the artwork to follow it.
-/// One number for both: they are one movement and must not finish apart.
+/// The queue and artwork share one transition so their movement finishes together.
 const QUEUE_ANIM_MS: u32 = 250;
-
-/// How long the scrubber waits after the last movement before seeking.
 const SCRUB_COMMIT_MS: u64 = 250;
 
 #[derive(Debug, Clone)]
 pub enum PlayerViewInput {
     Sync(Box<Snapshot>),
+    SegmentLoop(LoopMarks),
     Artwork(Option<std::path::PathBuf>),
     Scrub(f64),
     /// Only the newest scrub commits — the same generation trick the bar's seek
@@ -241,8 +240,12 @@ pub enum PlayerViewInput {
     /// Flip shuffle. No payload: the value is derived from the mirrored one,
     /// so this view never invents one (rule 3).
     ShuffleClicked,
-    /// Cycle repeat, for the same reason.
+    /// Cycle repeat from the mirrored mode.
     RepeatClicked,
+    SegmentLoopClicked,
+    OpenAlbum,
+    OpenArtist,
+    CopyLink,
     VolumeChanged(f64),
     /// How tall the drawer is about to be. See [`fill_window`].
     RoomFor(i32),
@@ -461,20 +464,63 @@ impl SimpleComponent for PlayerView {
                                             #[watch]
                                             set_label: &model.snap.title,
                                         },
-                                        gtk::Label {
-                                            set_ellipsize: gtk::pango::EllipsizeMode::End,
-                                            set_max_width_chars: 34,
-                                            set_use_markup: false,
+                                        gtk::Box {
+                                            set_orientation: gtk::Orientation::Vertical,
+                                            set_spacing: 0,
                                             #[watch]
-                                            set_css_classes: if model.stacked() {
-                                                &["title-4", "dim-label"]
+                                            set_halign: if model.centred_text() {
+                                                gtk::Align::Center
                                             } else {
-                                                &["caption", "dim-label"]
+                                                gtk::Align::Start
                                             },
-                                            #[watch]
-                                            set_xalign: if model.centred_text() { 0.5 } else { 0.0 },
-                                            #[watch]
-                                            set_label: &model.subtitle(),
+
+                                            gtk::Button {
+                                                add_css_class: "flat",
+                                                add_css_class: "player-album-link",
+                                                add_css_class: "player-metadata-link",
+                                                set_tooltip_text: Some("Open artist"),
+                                                #[watch]
+                                                set_visible: !model.snap.artist.is_empty(),
+                                                #[watch]
+                                                set_sensitive: model.snap.catalog_id.is_some(),
+                                                connect_clicked => PlayerViewInput::OpenArtist,
+
+                                                #[wrap(Some)]
+                                                set_child = &gtk::Label {
+                                                    set_ellipsize: gtk::pango::EllipsizeMode::End,
+                                                    set_max_width_chars: 34,
+                                                    set_use_markup: false,
+                                                    #[watch]
+                                                    set_css_classes: if model.stacked() {
+                                                        &["title-4"]
+                                                    } else {
+                                                        &["caption"]
+                                                    },
+                                                    #[watch]
+                                                    set_label: &model.snap.artist,
+                                                },
+                                            },
+                                            gtk::Button {
+                                                add_css_class: "flat",
+                                                add_css_class: "player-album-link",
+                                                add_css_class: "player-metadata-link",
+                                                set_tooltip_text: Some("Open album"),
+                                                #[watch]
+                                                set_visible: !model.snap.album.is_empty(),
+                                                #[watch]
+                                                set_sensitive: model.snap.catalog_id.is_some(),
+                                                connect_clicked => PlayerViewInput::OpenAlbum,
+
+                                                #[wrap(Some)]
+                                                set_child = &gtk::Label {
+                                                    set_ellipsize: gtk::pango::EllipsizeMode::End,
+                                                    set_max_width_chars: 34,
+                                                    set_use_markup: false,
+                                                    add_css_class: "caption",
+                                                    #[watch]
+                                                    set_label: &model.snap.album,
+                                                },
+                                            },
                                         },
                                     },
                                 },
@@ -668,6 +714,7 @@ impl SimpleComponent for PlayerView {
                 self.snap.position_ms = position;
                 self.refresh_transport();
             }
+            PlayerViewInput::SegmentLoop(marks) => self.refresh_segment_loop(marks),
             PlayerViewInput::Artwork(path) => match path {
                 Some(path) => self.cover.set_file(&path),
                 // The same empty case the bar draws, at the drawer's size —
@@ -730,6 +777,18 @@ impl SimpleComponent for PlayerView {
             }
             PlayerViewInput::RepeatClicked => {
                 let _ = sender.output(NowPlayingOutput::SetRepeat(self.snap.repeat.next()));
+            }
+            PlayerViewInput::SegmentLoopClicked => {
+                let _ = sender.output(NowPlayingOutput::CycleSegmentLoop);
+            }
+            PlayerViewInput::OpenAlbum => {
+                let _ = sender.output(NowPlayingOutput::OpenAlbum);
+            }
+            PlayerViewInput::OpenArtist => {
+                let _ = sender.output(NowPlayingOutput::OpenArtist);
+            }
+            PlayerViewInput::CopyLink => {
+                let _ = sender.output(NowPlayingOutput::CopyLink);
             }
             PlayerViewInput::VolumeChanged(v) => {
                 // Same shape as the bar's. `refresh` blocks this handler while
@@ -872,14 +931,5 @@ impl PlayerView {
         anim.set_value_from(f64::from(self.art_px.get()));
         anim.set_value_to(f64::from(target));
         anim.play();
-    }
-
-    fn subtitle(&self) -> String {
-        match (self.snap.artist.is_empty(), self.snap.album.is_empty()) {
-            (false, false) => format!("{} — {}", self.snap.artist, self.snap.album),
-            (false, true) => self.snap.artist.clone(),
-            (true, false) => self.snap.album.clone(),
-            (true, true) => String::new(),
-        }
     }
 }

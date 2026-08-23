@@ -535,6 +535,7 @@ mod tests {
             description: String::new(),
             artwork: None,
             mosaic_artwork: Vec::new(),
+            share_url: None,
             library: true,
         };
         let before = playlist_art_key(&playlist("before"));

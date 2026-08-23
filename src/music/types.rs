@@ -57,6 +57,9 @@ pub struct Track {
     pub duration_ms: u64,
     pub track_number: u32,
     pub artwork: Option<Artwork>,
+    /// Apple's public web link. Never an authenticated API URL.
+    #[serde(default)]
+    pub share_url: Option<String>,
 }
 
 impl Track {
@@ -138,6 +141,9 @@ pub struct Album {
     /// `2024`, or empty when Apple did not say.
     pub year: String,
     pub track_count: u32,
+    /// Apple's public web link. Absent for library-only resources.
+    #[serde(default)]
+    pub share_url: Option<String>,
     /// True when `id` is a **library** id (`l.…`) rather than a catalog one.
     /// They are not interchangeable: a library id 404s against
     /// `/catalog/…/albums` and vice versa. Set explicitly by whichever client
@@ -172,6 +178,9 @@ pub struct Playlist {
     /// Cached so a restart can redraw the grid collage without another API call.
     #[serde(default)]
     pub mosaic_artwork: Vec<Artwork>,
+    /// Apple's public web link. Absent for private/library-only playlists.
+    #[serde(default)]
+    pub share_url: Option<String>,
     /// As [`Album::library`].
     pub library: bool,
 }
@@ -184,11 +193,24 @@ pub struct Artist {
     pub artwork: Option<Artwork>,
     /// Apple's genre list, joined — "Pop, Latin".
     pub genres: String,
+    /// Apple's catalog biography, reduced to bounded plain text before it
+    /// crosses into the UI. Library artists inherit it from their catalog twin.
+    #[serde(default)]
+    pub biography: String,
     /// As [`Album::library`]. A library artist has no artwork of its own —
     /// Apple returns only a name for `/me/library/artists` — so the client asks
     /// for the catalog twin inline and copies its portrait across. See
     /// [`LibraryArtistResource`].
     pub library: bool,
+}
+
+/// The sections on a loaded artist destination.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArtistPageData {
+    pub artist: Artist,
+    pub top_songs: Vec<Track>,
+    pub latest_release: Option<Album>,
+    pub albums: Vec<Album>,
 }
 
 /// An Apple Music radio station surfaced by personal recommendations.
@@ -416,6 +438,7 @@ impl From<LibraryArtistResource> for Artist {
             // from the catalog.
             artist.artwork = catalog.artwork;
             artist.genres = catalog.genres;
+            artist.biography = catalog.biography;
             if artist.name.is_empty() {
                 artist.name = catalog.name;
             }
@@ -458,6 +481,8 @@ pub(crate) struct SongAttributes {
     #[serde(default)]
     pub track_number: u32,
     pub artwork: Option<ArtworkAttributes>,
+    #[serde(default)]
+    pub url: String,
     pub play_params: Option<PlayParams>,
     /// Whether the user has starred it. A documented attribute of
     /// `LibrarySongs.Attributes`, so it costs nothing — no read-back, no extra
@@ -500,6 +525,8 @@ pub(crate) struct AlbumAttributes {
     pub release_date: String,
     #[serde(default)]
     pub track_count: u32,
+    #[serde(default)]
+    pub url: String,
 }
 
 impl From<Resource<AlbumAttributes>> for Album {
@@ -519,6 +546,9 @@ impl From<Resource<AlbumAttributes>> for Album {
                 .map(|a| a.release_date.chars().take(4).collect())
                 .unwrap_or_default(),
             track_count: a.as_ref().map(|a| a.track_count).unwrap_or(0),
+            share_url: a
+                .as_ref()
+                .and_then(|a| crate::apple_link::canonical(&a.url)),
             // Catalog unless a library method says otherwise.
             library: false,
             artwork: a
@@ -537,6 +567,7 @@ pub(crate) struct ArtistAttributes {
     pub artwork: Option<ArtworkAttributes>,
     #[serde(default)]
     pub genre_names: Vec<String>,
+    pub editorial_notes: Option<DescriptionAttribute>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -574,6 +605,11 @@ impl From<Resource<ArtistAttributes>> for Artist {
                 .as_ref()
                 .map(|a| a.genre_names.join(", "))
                 .unwrap_or_default(),
+            biography: a
+                .as_ref()
+                .and_then(|a| a.editorial_notes.as_ref())
+                .map(|notes| editorial_plain_text(&notes.standard))
+                .unwrap_or_default(),
             library: false,
             artwork: a
                 .and_then(|a| a.artwork)
@@ -581,6 +617,42 @@ impl From<Resource<ArtistAttributes>> for Artist {
                 .map(|art| Artwork::new(art.url)),
         }
     }
+}
+
+/// Apple editorial notes can contain lightweight HTML. The app never renders
+/// remote markup: tags are discarded, common entities are decoded, whitespace
+/// is normalized, and the result is capped before GTK sees it.
+fn editorial_plain_text(raw: &str) -> String {
+    const MAX_CHARS: usize = 12_000;
+
+    let mut plain = String::with_capacity(raw.len().min(MAX_CHARS));
+    let mut in_tag = false;
+    for ch in raw.chars() {
+        match ch {
+            '<' => {
+                in_tag = true;
+                plain.push(' ');
+            }
+            '>' if in_tag => in_tag = false,
+            _ if !in_tag => plain.push(ch),
+            _ => {}
+        }
+    }
+
+    let decoded = plain
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">");
+    decoded
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(MAX_CHARS)
+        .collect()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -601,6 +673,8 @@ pub(crate) struct PlaylistAttributes {
     pub curator_name: String,
     pub artwork: Option<ArtworkAttributes>,
     pub description: Option<DescriptionAttribute>,
+    #[serde(default)]
+    pub url: String,
 }
 
 /// Apple wraps a playlist's blurb in an object with `standard` and sometimes
@@ -614,6 +688,9 @@ pub(crate) struct DescriptionAttribute {
 impl From<Resource<PlaylistAttributes>> for Playlist {
     fn from(res: Resource<PlaylistAttributes>) -> Self {
         let a = res.attributes;
+        let share_url = a
+            .as_ref()
+            .and_then(|a| crate::apple_link::canonical(&a.url));
         Playlist {
             id: res.id,
             date_added: a.as_ref().map(|a| a.date_added.clone()).unwrap_or_default(),
@@ -636,6 +713,7 @@ impl From<Resource<PlaylistAttributes>> for Playlist {
                 .filter(|art| !art.url.is_empty())
                 .map(|art| Artwork::new(art.url)),
             mosaic_artwork: Vec::new(),
+            share_url,
             // Set by whichever client method fetched it, as for Album/Artist.
             library: false,
         }
@@ -667,6 +745,7 @@ impl From<Resource<SongAttributes>> for Track {
             track_number: 0,
             artwork: None,
             play_params: None,
+            url: String::new(),
         });
         // A library resource's own id is not playable; its playParams carry the
         // catalog equivalent. A catalog resource is playable by its own id.
@@ -692,6 +771,7 @@ impl From<Resource<SongAttributes>> for Track {
                 .artwork
                 .filter(|a| !a.url.is_empty())
                 .map(|a| Artwork::new(a.url)),
+            share_url: crate::apple_link::canonical(&attrs.url),
         }
     }
 }
@@ -735,6 +815,7 @@ mod tests {
             duration_ms: 1,
             track_number: 1,
             artwork: None,
+            share_url: None,
         };
         assert_eq!(track(true), track(true));
         assert_ne!(track(true), track(false));
@@ -769,6 +850,20 @@ mod tests {
         let parsed: Response<Resource<ArtistAttributes>> = serde_json::from_str(raw).unwrap();
         let artist = Artist::from(parsed.data.into_iter().next().unwrap());
         assert_eq!(artist.genres, "Pop, Latin");
+    }
+
+    #[test]
+    fn artist_editorial_notes_become_bounded_plain_text() {
+        let long = "x".repeat(13_000);
+        let raw = format!(
+            r#"{{"data":[{{"id":"9","attributes":{{"name":"Aitana","editorialNotes":{{"standard":"<p>Pop &amp; Latin</p><script>ignored</script>{long}"}}}}}}]}}"#
+        );
+        let parsed: Response<Resource<ArtistAttributes>> = serde_json::from_str(&raw).unwrap();
+        let artist = Artist::from(parsed.data.into_iter().next().unwrap());
+
+        assert!(artist.biography.starts_with("Pop & Latin ignored"));
+        assert!(!artist.biography.contains('<'));
+        assert_eq!(artist.biography.chars().count(), 12_000);
     }
 
     #[test]
@@ -876,6 +971,7 @@ mod tests {
                 name: "Aitana".into(),
                 artwork: None,
                 genre_names: Vec::new(),
+                editorial_notes: None,
             }),
             relationships: Some(LibraryArtistRelationships {
                 catalog: Some(Response {
@@ -888,6 +984,9 @@ mod tests {
                                 url: "https://example.test/{w}x{h}bb.jpg".into(),
                             }),
                             genre_names: vec!["Pop".into(), "Latin".into()],
+                            editorial_notes: Some(DescriptionAttribute {
+                                standard: "<p>A catalog biography.</p>".into(),
+                            }),
                         }),
                     }],
                 }),
@@ -899,6 +998,7 @@ mod tests {
         assert!(artist.library);
         assert!(artist.artwork.is_some(), "portrait comes from the catalog");
         assert_eq!(artist.genres, "Pop, Latin");
+        assert_eq!(artist.biography, "A catalog biography.");
     }
 
     #[test]
@@ -911,6 +1011,7 @@ mod tests {
                 name: "Aitana".into(),
                 artwork: None,
                 genre_names: Vec::new(),
+                editorial_notes: None,
             }),
             relationships: None,
         });
@@ -934,6 +1035,7 @@ mod tests {
                 curator_name: String::new(),
                 artwork: None,
                 description: None,
+                url: String::new(),
             }),
         });
         assert_eq!(playlist.name, "Late night");
@@ -1000,6 +1102,7 @@ mod tests {
                 description: Some(DescriptionAttribute {
                     standard: "The songs everyone is playing.".into(),
                 }),
+                url: String::new(),
             }),
         });
         assert_eq!(playlist.curator, "Apple Music");

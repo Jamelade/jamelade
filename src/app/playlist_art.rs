@@ -329,6 +329,7 @@ mod tests {
             description: String::new(),
             artwork: None,
             mosaic_artwork: covers,
+            share_url: None,
             library: true,
         }
     }

@@ -22,6 +22,7 @@ use crate::settings::{
     JamkinQuality, MAX_DESKTOP_JAMKIN_OPACITY, MIN_DESKTOP_JAMKIN_OPACITY, Settings,
 };
 
+mod hover;
 mod oled;
 use oled::{InteractionState, OledCare};
 
@@ -143,24 +144,7 @@ impl JamkinSurface {
         popover.set_parent(actor.widget());
 
         let interaction = Rc::new(InteractionState::default());
-        let hover = gtk::EventControllerMotion::new();
-        {
-            let popover = popover.clone();
-            let interaction = interaction.clone();
-            hover.connect_enter(move |_, _, _| {
-                interaction.set_hover(true);
-                popover.popup();
-            });
-        }
-        {
-            let popover = popover.clone();
-            let interaction = interaction.clone();
-            hover.connect_leave(move |_| {
-                interaction.set_hover(false);
-                popover.popdown();
-            });
-        }
-        actor.widget().add_controller(hover);
+        hover::install(actor.widget(), &popover, interaction.clone());
 
         let dragged = Rc::new(Cell::new(false));
         let click = gtk::GestureClick::new();
@@ -344,7 +328,6 @@ impl JamkinMode {
         let keep_above = (config.keep_above || config.oled_care) && above.is_some();
         let oled = above.as_ref().map(OledCare::new);
         if let Some(oled) = &oled {
-            oled.set_user_opacity(config.opacity);
             oled.set_reduced_motion(config.reduced_motion);
         }
         let oled_care = config.oled_care && oled.is_some();
@@ -432,9 +415,6 @@ impl JamkinMode {
         for surface in self.surfaces() {
             surface.set_opacity(opacity);
         }
-        if let Some(oled) = &self.oled {
-            oled.set_user_opacity(opacity);
-        }
     }
 
     pub fn set_reduced_motion(&self, reduced: bool) {
@@ -449,9 +429,6 @@ impl JamkinMode {
     pub fn set_playing(&self, playing: bool) {
         for surface in self.surfaces() {
             surface.actor.set_playing(playing);
-        }
-        if let Some(oled) = &self.oled {
-            oled.set_playing(playing);
         }
     }
 

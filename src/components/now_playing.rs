@@ -51,10 +51,11 @@ pub fn mode_opacity(on: bool) -> f64 {
 /// Shared by the volume button's adjustment and the `Ctrl`+`Up`/`Down`
 /// accelerators, so the two cannot drift into disagreeing about what a step is.
 pub const VOLUME_STEP: f64 = 0.05;
-
 /// Everything the bar needs, flattened out of `PlayerState` at the boundary.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Snapshot {
+    /// Catalog id of the current song, when MusicKit exposes one.
+    pub catalog_id: Option<String>,
     pub title: String,
     pub artist: String,
     pub album: String,
@@ -101,6 +102,7 @@ impl Default for Snapshot {
     /// escapes — but a button that opens on silence is still wrong.
     fn default() -> Self {
         Self {
+            catalog_id: None,
             narrow: false,
             title: String::new(),
             artist: String::new(),
@@ -208,8 +210,12 @@ pub enum NowPlayingOutput {
     SetVolume(f64),
     SetShuffle(bool),
     SetRepeat(Repeat),
+    CycleSegmentLoop,
     ShowLyrics,
     ToggleQueue,
+    OpenAlbum,
+    OpenArtist,
+    CopyLink,
 }
 
 #[relm4::component(pub)]

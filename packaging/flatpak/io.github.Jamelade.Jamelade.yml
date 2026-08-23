@@ -47,6 +47,9 @@ finish-args:
   # The visible desktop entry is a stable sub-launcher so the Dynamic Launcher
   # portal can replace its Jamkin tile after an explicit confirmation.
   - --own-name=io.github.Jamelade.Jamelade.Launcher
+  # The separately installed per-user icon helper accepts only JamBun, JamPam,
+  # or JamJoe and can update only Jamelade's fixed launcher entry.
+  - --talk-name=io.github.Jamelade.IconHelper
   # Optional Discord Rich Presence uses only Discord's local IPC socket. These
   # are the standard narrow grants for native Discord/Vesktop, Flathub Discord,
   # and Flathub Vesktop respectively; the app does not inspect any other path
@@ -112,6 +115,7 @@ modules:
         # come from `cargo-sources.json` and Electron from the pinned archive.
         skip:
           - target
+          - icon-helper/target
           - sidecar/node_modules
           - .git
           - packaging/flatpak/.flatpak-builder

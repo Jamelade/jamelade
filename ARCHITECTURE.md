@@ -56,6 +56,11 @@ Chromium and Widevine.
   lyrics remain in memory.
 - `src/discord.rs` is off by default and talks only to a validated same-user
   local Discord socket.
+- `src/apple_link.rs` produces only bounded public `https://music.apple.com`
+  links and never includes an Apple cookie, token, or account identifier.
+- `icon-helper/` is an optional same-user D-Bus service with no network client.
+  It accepts only the three public Jamkin names and can replace only Jamelade's
+  fixed launcher entry.
 
 Changes to authentication, network allowlists, navigation, storage, logging,
 the sidecar protocol, dependencies, or packaging need an explicit security and

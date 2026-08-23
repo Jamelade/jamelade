@@ -24,18 +24,18 @@ const GROUP: &str = "Jamelade";
 /// The first-run balance between a quiet native surface and visibly liquid
 /// album glass. Kept as a percentage so it remains stable if the rendering
 /// formula evolves later.
-pub const DEFAULT_GLASS_STRENGTH: u8 = 70;
+pub const DEFAULT_GLASS_STRENGTH: u8 = 75;
 /// How strongly the previous and upcoming lyric lines borrow the selected
 /// Jamkin accent. Kept separate from glass strength so testing legibility does
 /// not unexpectedly change the rest of the window.
-pub const DEFAULT_LYRICS_ACCENT_STRENGTH: u8 = 70;
-pub const DEFAULT_DESKTOP_JAMKIN_SIZE: u16 = 168;
+pub const DEFAULT_LYRICS_ACCENT_STRENGTH: u8 = 75;
+pub const DEFAULT_DESKTOP_JAMKIN_SIZE: u16 = 175;
 pub const MIN_DESKTOP_JAMKIN_SIZE: u16 = 72;
 pub const MAX_DESKTOP_JAMKIN_SIZE: u16 = 384;
 pub const DEFAULT_DESKTOP_JAMKIN_OPACITY: u8 = 100;
 pub const MIN_DESKTOP_JAMKIN_OPACITY: u8 = 30;
 pub const MAX_DESKTOP_JAMKIN_OPACITY: u8 = 100;
-pub const DEFAULT_LYRICS_FONT_SCALE: u8 = 100;
+pub const DEFAULT_LYRICS_FONT_SCALE: u8 = 125;
 pub const MIN_LYRICS_FONT_SCALE: u8 = 80;
 pub const MAX_LYRICS_FONT_SCALE: u8 = 160;
 pub const DEFAULT_DESKTOP_JAMKIN_MARGIN: i32 = 24;
@@ -139,14 +139,13 @@ pub struct Settings {
     /// an image anywhere; both frame sets ship with the application.
     pub jamkin_quality: JamkinQuality,
     /// Show the selected Jamkin in its own small movable desktop window.
-    /// Off until explicitly enabled: a second toplevel should never surprise
-    /// somebody merely because they updated a music player.
+    /// On for a fresh install so the companion feature is immediately visible.
+    /// A saved preference always takes precedence on later starts.
     pub desktop_jamkin: bool,
     /// Square pixel size of the optional desktop actor. It is ordinary UI
     /// state, not a screen coordinate, and is safe to persist.
     pub desktop_jamkin_size: u16,
-    /// Sprite opacity only; the hover lyric bubble remains fully legible. OLED
-    /// care applies its extra dimming on top of this local preference.
+    /// Sprite opacity only; the hover lyric bubble remains fully legible.
     pub desktop_jamkin_opacity: u8,
     /// Keep the independent companion surface visible while the main player
     /// window is hidden and playback continues in the background.
@@ -157,12 +156,12 @@ pub struct Settings {
     pub desktop_jamkin_right: i32,
     pub desktop_jamkin_bottom: i32,
     /// Ask a capable Wayland compositor to draw the desktop Jamkin above other
-    /// windows. Off by default and contains no private data.
+    /// windows. On for a fresh install and contains no private data.
     pub desktop_jamkin_above: bool,
-    /// Periodically move the compositor-overlay Jamkin around screen edges to
-    /// reduce the chance of a persistent sprite marking an OLED panel.
+    /// Legacy storage name for Edge Walk. Periodically move the compositor-
+    /// overlay Jamkin to reduce the chance of marking an OLED panel.
     pub desktop_jamkin_oled_care: bool,
-    /// Freeze decorative Jamkin frame animation and make OLED moves instant.
+    /// Freeze decorative Jamkin frame animation and make Edge Walk instant.
     /// The desktop-wide GTK reduced-motion preference is always respected too.
     pub jamkin_reduced_motion: bool,
     /// How the Songs list is ordered. Stored as the id string, so an unknown
@@ -186,7 +185,7 @@ pub struct Settings {
     /// On by default.
     pub player_backdrop: bool,
     /// Combined material transparency and artwork blur, from 0 (subtle) to 100
-    /// (most liquid). It is presentation only and contains no private data.
+    /// (fully clear). It is presentation only and contains no private data.
     pub glass_strength: u8,
     /// Accent mix for the previous, next and following synchronized lyric
     /// lines, from 0 (neutral) to 100 (most colourful).
@@ -273,21 +272,21 @@ fn join_pins(pins: &[String]) -> String {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            theme: Theme::default(),
+            theme: Theme::Light,
             // The selected Jamkin supplies the colour unless someone chooses a
             // conventional or system accent in Preferences.
             accent: "jamkin".into(),
             companion: Companion::default(),
             launcher_icon: Companion::default(),
-            jamkin_quality: JamkinQuality::default(),
-            desktop_jamkin: false,
+            jamkin_quality: JamkinQuality::High,
+            desktop_jamkin: true,
             desktop_jamkin_size: DEFAULT_DESKTOP_JAMKIN_SIZE,
             desktop_jamkin_opacity: DEFAULT_DESKTOP_JAMKIN_OPACITY,
             desktop_jamkin_stay_visible: true,
             desktop_jamkin_right: DEFAULT_DESKTOP_JAMKIN_MARGIN,
             desktop_jamkin_bottom: DEFAULT_DESKTOP_JAMKIN_MARGIN,
-            desktop_jamkin_above: false,
-            desktop_jamkin_oled_care: false,
+            desktop_jamkin_above: true,
+            desktop_jamkin_oled_care: true,
             jamkin_reduced_motion: false,
             // Apple's own order.
             sort: "title".into(),
@@ -326,18 +325,28 @@ fn path() -> Option<std::path::PathBuf> {
 impl Settings {
     /// Read preferences, falling back to defaults for anything missing.
     pub fn load() -> Self {
-        let mut settings = Self::default();
         let Some(path) = path() else {
-            return settings;
+            return Self::default();
         };
 
         const SETTINGS_MAX_BYTES: usize = 64 * 1024;
         let Ok(data) = crate::private_storage::read_to_string(&path, SETTINGS_MAX_BYTES) else {
-            return settings;
+            return Self::default();
         };
 
+        let settings = Self::from_data(&data);
+        tracing::debug!("loaded settings");
+        settings
+    }
+
+    /// Overlay explicitly stored values onto the current fresh-install
+    /// defaults. Keeping this separate makes the "saved settings win" rule
+    /// directly testable without touching a real user's configuration file.
+    fn from_data(data: &str) -> Self {
+        let mut settings = Self::default();
+
         let file = KeyFile::new();
-        if file.load_from_data(&data, KeyFileFlags::NONE).is_err() {
+        if file.load_from_data(data, KeyFileFlags::NONE).is_err() {
             // No file yet, or unreadable. Defaults, quietly — this is the
             // normal first-run path, not a failure.
             return settings;
@@ -451,7 +460,6 @@ impl Settings {
         if let Ok(pinned) = file.string(GROUP, "pinned-playlists") {
             settings.pinned_playlists = parse_pins(&pinned);
         }
-        tracing::debug!("loaded settings");
         settings
     }
 
@@ -611,6 +619,7 @@ mod tests {
         // said to leave it on for everyone else, so a forgotten `..default()`
         // that silently turned it off would be the opposite of the request.
         assert!(Settings::default().player_backdrop);
+        assert_eq!(Settings::default().theme, Theme::Light);
     }
 
     #[test]
@@ -628,7 +637,7 @@ mod tests {
     }
 
     #[test]
-    fn lyric_text_starts_at_normal_size_and_has_safe_bounds() {
+    fn lyric_text_starts_at_the_curated_size_and_has_safe_bounds() {
         let scale = Settings::default().lyrics_font_scale;
         assert_eq!(scale, DEFAULT_LYRICS_FONT_SCALE);
         assert!((MIN_LYRICS_FONT_SCALE..=MAX_LYRICS_FONT_SCALE).contains(&scale));
@@ -654,7 +663,7 @@ mod tests {
     fn jambun_is_the_default_companion() {
         assert_eq!(Settings::default().companion, Companion::JamBun);
         assert_eq!(Settings::default().launcher_icon, Companion::JamBun);
-        assert_eq!(Settings::default().jamkin_quality, JamkinQuality::Auto);
+        assert_eq!(Settings::default().jamkin_quality, JamkinQuality::High);
         assert_eq!(Settings::default().accent, "jamkin");
     }
 
@@ -685,14 +694,59 @@ mod tests {
             Settings::default().desktop_jamkin_bottom,
             DEFAULT_DESKTOP_JAMKIN_MARGIN
         );
-        assert!(!Settings::default().desktop_jamkin_above);
-        assert!(!Settings::default().desktop_jamkin_oled_care);
+        assert!(Settings::default().desktop_jamkin);
+        assert!(Settings::default().desktop_jamkin_above);
+        assert!(Settings::default().desktop_jamkin_oled_care);
         assert_eq!(
             Settings::default().desktop_jamkin_opacity,
             DEFAULT_DESKTOP_JAMKIN_OPACITY
         );
         assert!(Settings::default().desktop_jamkin_stay_visible);
         assert!(!Settings::default().jamkin_reduced_motion);
+    }
+
+    #[test]
+    fn stored_preferences_override_every_changed_fresh_install_default() {
+        let stored = Settings::from_data(
+            "[Jamelade]\n\
+             theme=dark\n\
+             accent=blue\n\
+             companion=jamjoe\n\
+             launcher-icon=jampam\n\
+             jamkin-quality=performance\n\
+             desktop-jamkin=false\n\
+             desktop-jamkin-size=213\n\
+             desktop-jamkin-opacity=65\n\
+             desktop-jamkin-stay-visible=false\n\
+             desktop-jamkin-above=false\n\
+             desktop-jamkin-oled-care=false\n\
+             player-backdrop=false\n\
+             glass-strength=31\n\
+             lyrics-accent-strength=44\n\
+             lyrics-font-scale=90\n\
+             notify-track-change=true\n\
+             discord-activity=true\n\
+             lyrics-enabled=true\n",
+        );
+
+        assert_eq!(stored.theme, Theme::Dark);
+        assert_eq!(stored.accent, "blue");
+        assert_eq!(stored.companion, Companion::JamJoe);
+        assert_eq!(stored.launcher_icon, Companion::JamPam);
+        assert_eq!(stored.jamkin_quality, JamkinQuality::Performance);
+        assert!(!stored.desktop_jamkin);
+        assert_eq!(stored.desktop_jamkin_size, 213);
+        assert_eq!(stored.desktop_jamkin_opacity, 65);
+        assert!(!stored.desktop_jamkin_stay_visible);
+        assert!(!stored.desktop_jamkin_above);
+        assert!(!stored.desktop_jamkin_oled_care);
+        assert!(!stored.player_backdrop);
+        assert_eq!(stored.glass_strength, 31);
+        assert_eq!(stored.lyrics_accent_strength, 44);
+        assert_eq!(stored.lyrics_font_scale, 90);
+        assert!(stored.notify_track_change);
+        assert!(stored.discord_activity);
+        assert!(stored.lyrics_enabled);
     }
 
     #[test]

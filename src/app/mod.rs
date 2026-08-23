@@ -16,8 +16,9 @@ use relm4::typed_view::grid::TypedGridView;
 use relm4::typed_view::list::TypedListView;
 
 use crate::companion::Companion;
+use crate::components::artist_view::ArtistActivate;
 use crate::components::artwork::{self, ART_SIZE};
-use crate::components::detail_page::{DetailPage, PageKind, RowState};
+use crate::components::detail_page::{DetailActions, DetailPage, PageKind, RowState};
 use crate::components::explore_view::{ExploreAction, ExploreView};
 use crate::components::grid_item::{ArtRegistry, ArtRequest, GridItem, Tile, art_registry};
 use crate::components::jamkin_mode::{JamkinMode, JamkinModeConfig};
@@ -34,10 +35,11 @@ use crate::components::{
     row_registry, track_overrides,
 };
 use crate::mpris::Mpris;
-use crate::music::types::{Album, Artist, Artwork, Explore, Playlist, Track};
+use crate::music::types::{Album, Artist, ArtistPageData, Artwork, Explore, Playlist, Track};
 use crate::notify;
 use crate::player::protocol::{Command, RepeatMode, Tokens};
 use crate::player::{Incoming, PlayerState, sidecar};
+use crate::segment_loop::SegmentLoop;
 use crate::settings::{Section, Settings, Theme};
 
 /// How often the seek bar redraws while playing.
@@ -57,6 +59,7 @@ mod playback;
 mod playlist_art;
 mod queue;
 mod row_menu;
+mod segment_loop;
 mod status;
 mod supervise;
 mod view;
@@ -428,6 +431,9 @@ pub struct AppModel {
     art_for: Option<String>,
     /// Live only while playing; see `TICK_MS`.
     tick: Option<gtk::glib::SourceId>,
+    /// A-B loop enforcement wakes only while an active loop is playing.
+    segment_loop_tick: Option<gtk::glib::SourceId>,
+    segment_loop: SegmentLoop,
     settings: Settings,
     /// The track the last notification was sent for, so a queue echo or a
     /// position tick cannot re-notify for the song already playing.
@@ -534,6 +540,8 @@ pub enum AppMsg {
     VolumeDown,
     SetShuffle(bool),
     SetRepeat(Repeat),
+    CycleSegmentLoop,
+    SegmentLoopTick,
     SetSort(SortBy),
     /// Narrow the catalog search to one kind of result, or widen it again.
     SetCatalogFilter(CatalogFilter),
@@ -594,6 +602,16 @@ pub enum AppMsg {
     /// The lyrics button in Now Playing. Unlike a raw `SetView`, this also
     /// closes the modal player drawer so the destination is visible.
     ShowLyrics,
+    /// Copy the current catalog song's public Apple Music URL.
+    CopyPlayingLink,
+    /// Resolve the current catalog song's album and open its Jamelade page.
+    OpenPlayingAlbum,
+    /// Resolve the current catalog song's artist and open its Jamelade page.
+    OpenPlayingArtist,
+    /// Copy the public link stored on a loaded album or playlist page.
+    CopyPageLink {
+        page: u64,
+    },
     /// A grid tile was activated. The position is resolved against the grid
     /// immediately, never stored.
     AlbumActivated(u32),
@@ -673,13 +691,13 @@ pub enum AppMsg {
     SetDesktopJamkinSize(u16),
     /// Change only the floating sprite's opacity; its lyric bubble stays clear.
     SetDesktopJamkinOpacity(u8),
-    /// Freeze decorative Jamkin motion while retaining instant OLED moves.
+    /// Freeze decorative Jamkin motion while retaining instant Edge Walk moves.
     SetJamkinReducedMotion(bool),
     /// Keep the independent Jamkin visible while the player window is hidden.
     SetDesktopJamkinStayVisible(bool),
     /// Keep the desktop actor over other windows where the compositor permits.
     SetDesktopJamkinAbove(bool),
-    /// Move the overlay actor around the screen perimeter to protect OLEDs.
+    /// Move the overlay actor around the screen perimeter for Edge Walk.
     SetDesktopJamkinOledCare(bool),
     /// Remember the layer-shell placement without collecting screen identity.
     SetDesktopJamkinPosition {
@@ -690,7 +708,7 @@ pub enum AppMsg {
     SetDiscordActivity(bool),
     /// Whether the cover is painted behind the whole window (#145).
     SetPlayerBackdrop(bool),
-    /// Combined surface transparency and real artwork blur, 0–100.
+    /// Combined surface transparency and real artwork blur; 100 is fully clear.
     SetGlassStrength(u8),
     /// Accent mix for lyrics immediately around the live line, 0–100.
     SetLyricsAccentStrength(u8),
@@ -707,6 +725,10 @@ pub enum AppMsg {
     DetailActivated {
         page: u64,
         row: usize,
+    },
+    ArtistActivatedOnPage {
+        page: u64,
+        target: ArtistActivate,
     },
     /// Play everything on a page — from the top, or shuffled.
     PlayPage {
@@ -798,7 +820,7 @@ pub enum CommandMsg {
     ArtistPage {
         generation: u64,
         page: u64,
-        result: Result<(Artist, Vec<Album>), String>,
+        result: Result<ArtistPageData, String>,
     },
     /// A playlist page's contents.
     PlaylistPage {
@@ -841,7 +863,7 @@ pub enum CommandMsg {
     BackgroundPortal(Result<(), String>),
     LauncherIconInstalled {
         icon: Companion,
-        result: Result<(), String>,
+        result: Result<crate::launcher_icon::InstallMethod, String>,
     },
     /// A library write came back. `Ok` means Apple **accepted** it, not that
     /// it is done — see `Client::add_song_to_library`.
@@ -880,8 +902,12 @@ fn map_player_output(out: NowPlayingOutput) -> AppMsg {
         NowPlayingOutput::SetVolume(v) => AppMsg::SetVolume(v),
         NowPlayingOutput::SetShuffle(on) => AppMsg::SetShuffle(on),
         NowPlayingOutput::SetRepeat(r) => AppMsg::SetRepeat(r),
+        NowPlayingOutput::CycleSegmentLoop => AppMsg::CycleSegmentLoop,
         NowPlayingOutput::ShowLyrics => AppMsg::ShowLyrics,
         NowPlayingOutput::ToggleQueue => AppMsg::ToggleQueue,
+        NowPlayingOutput::OpenAlbum => AppMsg::OpenPlayingAlbum,
+        NowPlayingOutput::OpenArtist => AppMsg::OpenPlayingArtist,
+        NowPlayingOutput::CopyLink => AppMsg::CopyPlayingLink,
     }
 }
 
@@ -972,8 +998,9 @@ impl Component for AppModel {
                         // widget is for. The queue on the right is the same
                         // shape for the same reason.
                         #[wrap(Some)]
-                        #[name = "nav_split"]
-                        set_content = &adw::OverlaySplitView {
+                            #[name = "nav_split"]
+                            set_content = &adw::OverlaySplitView {
+                            add_css_class: "art-foreground",
                             set_min_sidebar_width: 200.0,
                             set_max_sidebar_width: 260.0,
                             // Not a `#[watch]`. See `sync_animated`.
@@ -1009,11 +1036,6 @@ impl Component for AppModel {
                                             set_subtitle: &model.subtitle(),
                                         },
 
-                                        pack_end = &gtk::MenuButton {
-                                            set_icon_name: "open-menu-symbolic",
-                                            set_tooltip_text: Some("Main Menu"),
-                                            set_menu_model: Some(&primary_menu),
-                                        },
                                     },
 
                                     #[wrap(Some)]
@@ -1109,16 +1131,16 @@ impl Component for AppModel {
                                             connect_clicked => AppMsg::ToggleSidebar,
                                         },
 
-                                        // Preferences are a first-class place,
-                                        // not something to hunt for in the
-                                        // overflow menu. Keeping this beside
-                                        // the sidebar control also leaves it
-                                        // reachable when the sidebar is closed.
-                                        pack_start = &gtk::Button {
+                                        // One application menu beside the
+                                        // sidebar control. Keeping Preferences,
+                                        // account and app actions together
+                                        // avoids a second hamburger hidden in
+                                        // the sidebar header.
+                                        pack_start = &gtk::MenuButton {
                                             set_icon_name: "preferences-system-symbolic",
-                                            set_tooltip_text: Some("Preferences"),
+                                            set_tooltip_text: Some("Settings and App Menu"),
                                             add_css_class: "flat",
-                                            connect_clicked => AppMsg::ShowPreferences,
+                                            set_menu_model: Some(&primary_menu),
                                         },
 
                                         // Beside the sidebar toggle rather than
@@ -1559,8 +1581,12 @@ impl Component for AppModel {
                 NowPlayingOutput::SetVolume(v) => AppMsg::SetVolume(v),
                 NowPlayingOutput::SetShuffle(on) => AppMsg::SetShuffle(on),
                 NowPlayingOutput::SetRepeat(mode) => AppMsg::SetRepeat(mode),
+                NowPlayingOutput::CycleSegmentLoop => AppMsg::CycleSegmentLoop,
                 NowPlayingOutput::ShowLyrics => AppMsg::ShowLyrics,
                 NowPlayingOutput::ToggleQueue => AppMsg::ToggleQueue,
+                NowPlayingOutput::OpenAlbum => AppMsg::OpenPlayingAlbum,
+                NowPlayingOutput::OpenArtist => AppMsg::OpenPlayingArtist,
+                NowPlayingOutput::CopyLink => AppMsg::CopyPlayingLink,
             });
 
         let library: TypedListView<LibraryItem, gtk::NoSelection> = TypedListView::new();
@@ -1807,12 +1833,18 @@ impl Component for AppModel {
             art_path: None,
             art_for: None,
             tick: None,
+            segment_loop_tick: None,
+            segment_loop: SegmentLoop::default(),
             settings,
             notified_for: None,
             notify_when_art_lands: None,
         };
         let primary_menu = gtk::gio::Menu::new();
         {
+            let preferences = gtk::gio::Menu::new();
+            preferences.append(Some("_Preferences"), Some("win.preferences"));
+            primary_menu.append_section(None, &preferences);
+
             // **First, in its own section.** It is the one item here that is
             // not about running the app, and under Preferences and About it
             // read as the least of them — the only thing in this menu that
@@ -1893,6 +1925,7 @@ impl Component for AppModel {
     }
 
     fn shutdown(&mut self, _widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {
+        self.clear_segment_loop();
         self.jamkin_mode.set_enabled(false);
         self.discord_presence.set_enabled(false);
         // A now-playing notification must not outlive the player that sent it.
@@ -2125,6 +2158,41 @@ impl AppModel {
                 self.flash_volume(&sender);
             }
             AppMsg::HideVolumeOsd => self.hide_volume_osd(),
+            AppMsg::CopyPlayingLink => {
+                let link = self.tokens.as_ref().and_then(|tokens| {
+                    self.playing_catalog_id()
+                        .and_then(|id| crate::apple_link::song(&tokens.storefront, &id))
+                });
+                match link {
+                    Some(link) => self.copy_apple_link(&link),
+                    None => self.toast("No public Apple Music link is available"),
+                }
+            }
+            AppMsg::OpenPlayingAlbum => match self.playing_catalog_id() {
+                Some(catalog_id) => sender.input(AppMsg::OpenQueueTrackPage {
+                    catalog_id,
+                    album: true,
+                }),
+                None => self.toast("Apple doesn't expose an album for this track"),
+            },
+            AppMsg::OpenPlayingArtist => match self.playing_catalog_id() {
+                Some(catalog_id) => sender.input(AppMsg::OpenQueueTrackPage {
+                    catalog_id,
+                    album: false,
+                }),
+                None => self.toast("Apple doesn't expose an artist for this track"),
+            },
+            AppMsg::CopyPageLink { page } => {
+                let link = self
+                    .pages
+                    .iter()
+                    .find(|candidate| candidate.id == page)
+                    .and_then(|page| page.share_link().map(str::to_owned));
+                match link {
+                    Some(link) => self.copy_apple_link(&link),
+                    None => self.toast("No public Apple Music link is available"),
+                }
+            }
             AppMsg::SidebarRowChosen(index) => self.sidebar_row_chosen(index, &sender),
             AppMsg::SidebarRowActivated(index) => self.sidebar_row_activated(index, &sender),
             AppMsg::ShowPinPicker => self.show_pin_picker(&sender, root),
@@ -2136,6 +2204,8 @@ impl AppModel {
                 self.push_snapshot();
                 self.sync_lyrics_position();
             }
+            AppMsg::CycleSegmentLoop => self.cycle_segment_loop(&sender),
+            AppMsg::SegmentLoopTick => self.enforce_segment_loop(),
             AppMsg::SearchChanged(query) => {
                 if !self.view.searchable() {
                     return;
@@ -2575,6 +2645,28 @@ impl AppModel {
                     None => {}
                 }
             }
+            AppMsg::ArtistActivatedOnPage { page, target } => {
+                let Some(page) = self.pages.iter().find(|candidate| candidate.id == page) else {
+                    return;
+                };
+                match target {
+                    ArtistActivate::Album(index) => {
+                        if let Some(album) = page.artist_albums.get(index) {
+                            sender.input(AppMsg::OpenPage(PageKind::album(album)));
+                        }
+                    }
+                    ArtistActivate::LatestRelease => {
+                        if let Some(album) = &page.artist_latest_release {
+                            sender.input(AppMsg::OpenPage(PageKind::album(album)));
+                        }
+                    }
+                    ArtistActivate::TopSong(index) => {
+                        let songs: Vec<Entry> =
+                            page.artist_songs.iter().cloned().map(Entry::Song).collect();
+                        self.play_entries(&songs, index, Start::Clicked);
+                    }
+                }
+            }
             AppMsg::PlayPage { page, shuffle } => {
                 let Some(target) = self.pages.iter().find(|p| p.id == page) else {
                     return;
@@ -2612,6 +2704,7 @@ impl AppModel {
             }
             AppMsg::ClearQueue => {
                 tracing::info!("clearing the queue");
+                self.clear_segment_loop();
                 self.send(Command::ClearQueue);
                 // Nothing to come back to next launch, either. The mirror
                 // follows the sidecar's queue event as always (rule 3) — this
@@ -2773,7 +2866,7 @@ impl AppModel {
             AppMsg::SetDesktopJamkinOledCare(enabled) => {
                 let actual = self.jamkin_mode.set_oled_care(enabled);
                 if enabled && !actual {
-                    self.toast("OLED care is unavailable on this desktop");
+                    self.toast("Edge Walk is unavailable on this desktop");
                 }
                 let above = actual || self.settings.desktop_jamkin_above;
                 if self.settings.desktop_jamkin_oled_care != actual
@@ -3067,11 +3160,19 @@ impl AppModel {
                     return;
                 };
                 match result {
-                    Ok((artist, albums)) => {
-                        tracing::info!(page, albums = albums.len(), "artist loaded");
-                        let art = artist.artwork.clone();
-                        target.show_artist(&artist, albums.into_iter().map(Entry::Album).collect());
-                        self.fetch_page_art(page, art, &sender);
+                    Ok(data) => {
+                        tracing::info!(
+                            page,
+                            top_songs = data.top_songs.len(),
+                            albums = data.albums.len(),
+                            "artist loaded"
+                        );
+                        target.show_artist(
+                            &data.artist,
+                            data.top_songs,
+                            data.latest_release,
+                            data.albums,
+                        );
                     }
                     Err(err) => {
                         tracing::warn!(page, %err, "artist page failed");
@@ -3261,11 +3362,18 @@ impl AppModel {
                 }
                 self.launcher_icon_pending = None;
                 match result {
-                    Ok(()) => {
+                    Ok(method) => {
                         self.settings.launcher_icon = icon;
                         self.settings.save();
                         root.set_icon_name(Some(icon.window_icon_name()));
-                        self.toast(crate::launcher_icon::CHANGED_HELP);
+                        self.toast(match method {
+                            crate::launcher_icon::InstallMethod::Helper => {
+                                crate::launcher_icon::HELPER_CHANGED_HELP
+                            }
+                            crate::launcher_icon::InstallMethod::Portal => {
+                                crate::launcher_icon::PORTAL_CHANGED_HELP
+                            }
+                        });
                     }
                     Err(err) => {
                         tracing::warn!(%err, "launcher icon change failed");
@@ -3355,6 +3463,9 @@ impl AppModel {
                     }
                 }
                 painted += self.explore_view.paint(&key, &texture);
+                for page in &self.pages {
+                    painted += page.paint_artist_art(&key, &texture);
+                }
                 tracing::trace!(painted, "tile art delivered");
             }
             CommandMsg::PlaylistTileArt(result) => self.finish_playlist_art(result, &sender),
@@ -3555,6 +3666,7 @@ impl AppModel {
             }
             CommandMsg::Sidecar(Incoming::Died(reason)) => {
                 tracing::warn!(%reason, "sidecar died");
+                self.clear_segment_loop();
                 self.sidecar = None;
                 self.restarts += 1;
                 self.stage = Stage::Restarting(self.restarts);
@@ -3621,6 +3733,7 @@ impl AppModel {
     /// next. The unplayable-id cache stays — it is about Apple's catalog, not
     /// about the user.
     fn forget_session(&mut self) {
+        self.clear_segment_loop();
         // Invalidate first. Every async API/artwork task owns credential or
         // account-derived input cloned before it started; none of its results
         // may land after the rest of this function has erased that account.
@@ -3719,6 +3832,19 @@ impl AppModel {
     fn toast(&self, text: &str) {
         self.toaster.add_toast(adw::Toast::new(text));
     }
+
+    fn copy_apple_link(&self, link: &str) {
+        let Some(link) = crate::apple_link::canonical(link) else {
+            self.toast("No public Apple Music link is available");
+            return;
+        };
+        let Some(display) = gtk::gdk::Display::default() else {
+            self.toast("Clipboard is unavailable");
+            return;
+        };
+        display.clipboard().set_text(&link);
+        self.toast("Apple Music link copied");
+    }
 }
 
 #[cfg(test)]
@@ -3741,6 +3867,7 @@ mod tests {
             duration_ms: 200_000,
             track_number: 1,
             artwork: None,
+            share_url: None,
         }
     }
 

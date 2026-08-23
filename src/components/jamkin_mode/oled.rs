@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Jamelade contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! OLED-care movement for the compositor-controlled Jamkin surface.
+//! Edge Walk movement for the compositor-controlled Jamkin surface.
 //!
 //! This module is intentionally local-only: it reads the current monitor's
 //! dimensions from GTK, moves layer-shell margins, and forgets every automatic
@@ -17,8 +17,6 @@ use relm4::adw::prelude::*;
 use relm4::gtk;
 
 use super::{JamkinSurface, clamp_layer_margins, layer_margin_limits};
-use crate::settings::{MAX_DESKTOP_JAMKIN_OPACITY, MIN_DESKTOP_JAMKIN_OPACITY};
-
 const FIRST_MOVE: Duration = Duration::from_secs(12);
 const MOVE_INTERVAL: Duration = Duration::from_secs(120);
 const BUSY_RETRY: Duration = Duration::from_secs(10);
@@ -49,11 +47,8 @@ impl InteractionState {
 /// pointer or a drag is interacting with the Jamkin.
 pub(super) struct OledCare {
     window: gtk::Window,
-    sprite: gtk::Picture,
     interaction: Rc<InteractionState>,
     active: Cell<bool>,
-    playing: Cell<bool>,
-    user_opacity: Cell<f64>,
     reduced_motion: Cell<bool>,
     step: Cell<u32>,
     timer: RefCell<Option<gtk::glib::SourceId>>,
@@ -64,11 +59,8 @@ impl OledCare {
     pub(super) fn new(surface: &JamkinSurface) -> Rc<Self> {
         Rc::new(Self {
             window: surface.window.clone(),
-            sprite: surface.actor.widget().clone(),
             interaction: surface.interaction.clone(),
             active: Cell::new(false),
-            playing: Cell::new(false),
-            user_opacity: Cell::new(1.0),
             reduced_motion: Cell::new(false),
             step: Cell::new(0),
             timer: RefCell::new(None),
@@ -83,40 +75,12 @@ impl OledCare {
                 .unwrap_or(true)
     }
 
-    fn base_opacity(&self) -> f64 {
-        self.user_opacity.get() * if self.playing.get() { 0.90 } else { 0.68 }
-    }
-
-    pub(super) fn set_user_opacity(&self, opacity: u8) {
-        self.user_opacity.set(
-            f64::from(opacity.clamp(MIN_DESKTOP_JAMKIN_OPACITY, MAX_DESKTOP_JAMKIN_OPACITY))
-                / 100.0,
-        );
-        self.sprite.set_opacity(if self.active.get() {
-            self.base_opacity()
-        } else {
-            self.user_opacity.get()
-        });
-    }
-
     pub(super) fn set_reduced_motion(&self, reduced: bool) {
         if self.reduced_motion.replace(reduced) == reduced {
             return;
         }
         if reduced && let Some(animation) = self.motion.borrow_mut().take() {
             animation.pause();
-            self.sprite.set_opacity(if self.active.get() {
-                self.base_opacity()
-            } else {
-                self.user_opacity.get()
-            });
-        }
-    }
-
-    pub(super) fn set_playing(&self, playing: bool) {
-        self.playing.set(playing);
-        if self.active.get() {
-            self.sprite.set_opacity(self.base_opacity());
         }
     }
 
@@ -129,10 +93,7 @@ impl OledCare {
             animation.pause();
         }
         if active {
-            self.sprite.set_opacity(self.base_opacity());
             self.schedule(FIRST_MOVE);
-        } else {
-            self.sprite.set_opacity(self.user_opacity.get());
         }
     }
 
@@ -207,35 +168,7 @@ impl OledCare {
         if let Some(animation) = self.motion.borrow_mut().take() {
             animation.pause();
         }
-        if !self.animations_enabled() {
-            set_layer_margins(&self.window, to);
-            return;
-        }
-        let window = self.window.clone();
-        let sprite = self.sprite.clone();
-        let moved = Rc::new(Cell::new(false));
-        let moved_in_animation = moved.clone();
-        let base = self.base_opacity();
-        let animation = adw::TimedAnimation::new(
-            &self.sprite,
-            0.0,
-            1.0,
-            720,
-            adw::CallbackAnimationTarget::new(move |progress| {
-                if progress >= 0.5 && !moved_in_animation.replace(true) {
-                    set_layer_margins(&window, to);
-                }
-                let visibility = if progress < 0.5 {
-                    1.0 - progress * 1.9
-                } else {
-                    0.05 + (progress - 0.5) * 1.9
-                };
-                sprite.set_opacity((base * visibility).clamp(0.03, base));
-            }),
-        );
-        animation.set_easing(adw::Easing::EaseInOutCubic);
-        animation.play();
-        *self.motion.borrow_mut() = Some(animation);
+        set_layer_margins(&self.window, to);
     }
 }
 

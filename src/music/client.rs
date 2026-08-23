@@ -18,10 +18,10 @@ use std::collections::HashMap;
 use serde::Deserialize;
 
 use super::types::{
-    Album, AlbumAttributes, AlbumResource, Artist, ArtistAttributes, ArtistResource, Explore,
-    ExploreItem, ExploreSection, LibraryArtistResource, Playlist, PlaylistAttributes,
-    RelationshipData, Resource, Response, SongAttributes, SongContainers, Station,
-    StationAttributes, Track,
+    Album, AlbumAttributes, AlbumResource, Artist, ArtistAttributes, ArtistPageData,
+    ArtistResource, Explore, ExploreItem, ExploreSection, LibraryArtistResource, Playlist,
+    PlaylistAttributes, RelationshipData, Resource, Response, SongAttributes, SongContainers,
+    Station, StationAttributes, Track,
 };
 
 /// What a catalog search turned up. Apple returns each kind in its own array;
@@ -1167,7 +1167,7 @@ impl Client {
     }
 
     /// One artist from the user's library, with the albums they saved.
-    pub async fn library_artist_albums(&self, id: &str) -> Result<(Artist, Vec<Album>)> {
+    pub async fn library_artist_albums(&self, id: &str) -> Result<ArtistPageData> {
         let id = urlencode(id);
         // `catalog` alongside `albums`: the portrait belongs to the catalog
         // artist, exactly as in `all_library_artists`, so the page header
@@ -1182,6 +1182,12 @@ impl Client {
             .and_then(|c| c.data.first())
             .cloned()
             .map(Artist::from);
+        let catalog_id = resource
+            .relationships
+            .as_ref()
+            .and_then(|r| r.catalog.as_ref())
+            .and_then(|c| c.data.first())
+            .map(|catalog| catalog.id.clone());
 
         let mut albums = artist_albums_of(&resource);
 
@@ -1206,8 +1212,19 @@ impl Client {
         if let Some(portrait) = portrait {
             artist.artwork = portrait.artwork;
             artist.genres = portrait.genres;
+            artist.biography = portrait.biography;
         }
-        Ok((artist, albums))
+        let (top_songs, latest_release) = match catalog_id {
+            Some(id) => self.artist_extras(&urlencode(&id)).await,
+            None => (Vec::new(), albums.first().cloned()),
+        };
+        let latest_release = latest_release.or_else(|| albums.first().cloned());
+        Ok(ArtistPageData {
+            artist,
+            top_songs,
+            latest_release,
+            albums,
+        })
     }
 
     /// A one-shot relationship fetch — no paging. Used only as the fallback
@@ -1230,7 +1247,7 @@ impl Client {
     }
 
     /// An artist's albums, newest first as Apple orders them.
-    pub async fn artist_albums(&self, id: &str) -> Result<(Artist, Vec<Album>)> {
+    pub async fn artist_albums(&self, id: &str) -> Result<ArtistPageData> {
         let id = urlencode(id);
         let resource = self
             .artist_resource(&format!(
@@ -1239,7 +1256,68 @@ impl Client {
             ))
             .await?;
         let albums = artist_albums_of(&resource);
-        Ok((Artist::from(resource.into_artist()), albums))
+        let (top_songs, latest_release) = self.artist_extras(&id).await;
+        Ok(ArtistPageData {
+            artist: Artist::from(resource.into_artist()),
+            top_songs,
+            latest_release: latest_release.or_else(|| albums.first().cloned()),
+            albums,
+        })
+    }
+
+    async fn artist_extras(&self, encoded_id: &str) -> (Vec<Track>, Option<Album>) {
+        let songs = self.artist_top_songs(encoded_id).await.unwrap_or_else(|_| {
+            tracing::warn!("artist top songs were unavailable");
+            Vec::new()
+        });
+        let latest = self
+            .artist_latest_release(encoded_id)
+            .await
+            .unwrap_or_else(|_| {
+                tracing::warn!("artist latest release was unavailable");
+                None
+            });
+        (songs, latest)
+    }
+
+    /// Apple's public top-songs view for one catalog artist.
+    async fn artist_top_songs(&self, encoded_id: &str) -> Result<Vec<Track>> {
+        let res = self
+            .get(&format!(
+                "/catalog/{}/artists/{encoded_id}/view/top-songs?limit=10",
+                self.storefront
+            ))
+            .send()
+            .await
+            .map_err(Self::transport_error)
+            .context("requesting artist top songs")?;
+
+        if !res.status().is_success() {
+            return Err(self.explain(res).await);
+        }
+        let parsed: Response<Resource<SongAttributes>> =
+            bounded_json(res, "artist top songs").await?;
+        Ok(parsed.data.into_iter().map(Track::from).collect())
+    }
+
+    /// Apple's public latest-release view for one catalog artist.
+    async fn artist_latest_release(&self, encoded_id: &str) -> Result<Option<Album>> {
+        let res = self
+            .get(&format!(
+                "/catalog/{}/artists/{encoded_id}/view/latest-release?limit=1",
+                self.storefront
+            ))
+            .send()
+            .await
+            .map_err(Self::transport_error)
+            .context("requesting artist latest release")?;
+
+        if !res.status().is_success() {
+            return Err(self.explain(res).await);
+        }
+        let parsed: Response<Resource<AlbumAttributes>> =
+            bounded_json(res, "artist latest release").await?;
+        Ok(parsed.data.into_iter().next().map(Album::from))
     }
 
     /// As [`Client::album_resource`], for artists.

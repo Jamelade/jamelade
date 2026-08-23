@@ -74,8 +74,13 @@ during a build. Every crate is declared with a hash up front.
   not probe them until the separately off-by-default Discord Activity setting
   is enabled, and the code accepts only same-user Unix sockets in those paths.
 
-Changing the rounded Jamkin launcher tile uses the standard Dynamic Launcher
-portal. The desktop shows its own confirmation and writes one fixed
+Changing the rounded Jamkin launcher tile first tries the optional per-user
+helper installed with `scripts/icon-helper.sh install`. It accepts only the
+three fixed Jamkin names, has no network client, and can write only Jamelade's
+fixed launcher. The Flatpak itself still has no home-directory access.
+
+Without the helper, Jamelade uses the standard Dynamic Launcher portal. The
+desktop shows its own confirmation and writes one fixed
 `io.github.Jamelade.Jamelade.Launcher.desktop` sub-entry; Jamelade never receives
 access to `~/.local/share/applications` or any other launcher.
 

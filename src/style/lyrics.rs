@@ -42,9 +42,9 @@ pub fn set_accent_strength(strength: u8) {
     // GTK's `mix(first, second, amount)` weights the second colour. Keeping the
     // neutral foreground first makes larger values mean more Jamkin colour.
     let css = format!(
-        ".lyrics-previous {{ color: mix(@window_fg_color, var(--accent-color), {previous:.3}); }}
-         .lyrics-next {{ color: mix(@window_fg_color, var(--accent-color), {next:.3}); }}
-         .lyrics-following {{ color: mix(@window_fg_color, var(--accent-color), {following:.3}); }}"
+        ".lyrics-previous {{ color: mix(var(--art-fg-color), var(--accent-color), {previous:.3}); }}
+         .lyrics-next {{ color: mix(var(--art-fg-color), var(--accent-color), {next:.3}); }}
+         .lyrics-following {{ color: mix(var(--art-fg-color), var(--accent-color), {following:.3}); }}"
     );
     ACCENT.with(|provider| provider.load_from_string(&css));
 }

@@ -528,6 +528,7 @@ mod tests {
             duration_ms: 200_000,
             track_number: 1,
             artwork: None,
+            share_url: None,
         })
     }
 
@@ -540,6 +541,7 @@ mod tests {
             artwork: None,
             year: year.into(),
             track_count: 9,
+            share_url: None,
             library: false,
         })
     }
