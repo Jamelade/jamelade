@@ -39,30 +39,25 @@ jobs:
         run: make check
 
   package:
-    name: Build and publish Flatpak
+    name: Build Flatpak
     needs: check
     runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions@sha256:1d167b05fbbb071638d2ae1a114e518b78ea18c636fd1f9750005081111703d8
+      options: --privileged
     timeout-minutes: 120
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Install Flatpak tooling
+      - name: Install manifest extensions
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes \
-            appstream desktop-file-utils flatpak jq
-          sudo flatpak remote-add --system --if-not-exists flathub \
-            https://dl.flathub.org/repo/flathub.flatpakrepo
-          sudo flatpak install --system --noninteractive --assumeyes flathub \
-            org.flatpak.Builder//stable \
-            org.gnome.Platform//49 \
-            org.gnome.Sdk//49 \
+          flatpak install --system --noninteractive --assumeyes flathub \
             org.freedesktop.Sdk.Extension.rust-stable//25.08 \
             org.electronjs.Electron2.BaseApp//25.08
 
@@ -70,9 +65,39 @@ jobs:
         env:
           FLATPAK_BUILD_INSTALLATION: "system"
           RELEASE_SKIP_SOURCE_CHECKS: "1"
+          REPRO_CHECK: "1"
         run: ./scripts/release-check.sh
 
       - name: Verify release assets
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum --check SHA256SUMS
+          test "$(find . -maxdepth 1 -name '*.flatpak' | wc -l)" -eq 1
+          test "$(find . -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 1
+
+      - name: Preserve verified release candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: jamelade-${{ github.ref_name }}-release-candidate
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish GitHub prerelease
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Restore verified release candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: jamelade-${{ github.ref_name }}-release-candidate
+          path: dist
+
+      - name: Verify release assets again
         run: |
           set -euo pipefail
           cd dist

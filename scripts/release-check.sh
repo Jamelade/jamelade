@@ -9,7 +9,7 @@
 # archive still comes from HEAD, so never publish an artefact made that way.
 # RELEASE_SKIP_SOURCE_CHECKS=1 is reserved for CI after its isolated check job.
 # REPRO_CHECK=1 repeats the complete Flatpak build in a fresh directory and
-# refuses a byte-different unsigned bundle.
+# compares its content commits and source archive.
 # FLATPAK_GPG_KEY=<id> signs the exported Flatpak commit when a maintained
 # release key exists; checksums should still be signed separately at publish.
 # FLATPAK_BUILD_INSTALLATION=user|system selects where Builder finds SDKs.
@@ -32,10 +32,16 @@ export SOURCE_DATE_EPOCH="$release_epoch"
 
 if ! command -v cargo >/dev/null 2>&1; then
     data_home="${XDG_DATA_HOME:-${HOME}/.local/share}"
-    flatpak_rust="$data_home/flatpak/runtime/org.freedesktop.Sdk.Extension.rust-stable/x86_64/25.08/active/files/bin"
-    if [[ -x "$flatpak_rust/cargo" ]]; then
-        export PATH="$flatpak_rust:$PATH"
-    fi
+    flatpak_rust_candidates=(
+        "$data_home/flatpak/runtime/org.freedesktop.Sdk.Extension.rust-stable/x86_64/25.08/active/files/bin"
+        "/var/lib/flatpak/runtime/org.freedesktop.Sdk.Extension.rust-stable/x86_64/25.08/active/files/bin"
+    )
+    for flatpak_rust in "${flatpak_rust_candidates[@]}"; do
+        if [[ -x "$flatpak_rust/cargo" ]]; then
+            export PATH="$flatpak_rust:$PATH"
+            break
+        fi
+    done
 fi
 
 for tool in cargo rustc git node npm flatpak appstreamcli desktop-file-validate jq sha256sum gzip cmp; do
@@ -82,6 +88,12 @@ if [[ "${REPRO_CHECK:-0}" == 1 && -n "${FLATPAK_GPG_KEY:-}" ]]; then
     printf 'release check: reproducibility comparison must use an unsigned build\n' >&2
     exit 1
 fi
+if [[ "${REPRO_CHECK:-0}" == 1 ]]; then
+    command -v ostree >/dev/null 2>&1 || {
+        printf 'release check: reproducibility comparison needs ostree\n' >&2
+        exit 1
+    }
+fi
 
 git diff --check
 if [[ "${RELEASE_SKIP_SOURCE_CHECKS:-0}" != 1 ]]; then
@@ -112,7 +124,8 @@ if [[ -n "${FLATPAK_GPG_KEY:-}" ]]; then
     sign_args+=("--gpg-sign=$FLATPAK_GPG_KEY")
 fi
 
-"${builder[@]}" --override-source-date-epoch="$release_epoch" --force-clean \
+"${builder[@]}" --override-source-date-epoch="$release_epoch" \
+    --disable-rofiles-fuse --force-clean \
     "${builder_installation[@]}" \
     --repo="$repo" "${sign_args[@]}" \
     "$root/build-dir" "$manifest"
@@ -183,17 +196,23 @@ if [[ "${REPRO_CHECK:-0}" == 1 ]]; then
     fi
     trap 'rm -rf -- "$second"' EXIT
     "${builder[@]}" --override-source-date-epoch="$release_epoch" \
-        --disable-cache --force-clean \
+        --disable-cache --disable-rofiles-fuse --force-clean \
         "${builder_installation[@]}" \
         --state-dir="$second/state" --repo="$second/repo" \
         "$second/build" "$manifest"
-    flatpak build-bundle \
-        --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
-        "$second/repo" "$second/$bundle_name" io.github.Jamelade.Jamelade master
-    cmp --silent "$bundle" "$second/$bundle_name" || {
-        printf 'release check: repeated Flatpak bundle is not byte-identical\n' >&2
-        exit 1
-    }
+    reproducible_refs=(
+        app/io.github.Jamelade.Jamelade/x86_64/master
+        runtime/io.github.Jamelade.Jamelade.Debug/x86_64/master
+        runtime/io.github.Jamelade.Jamelade.Locale/x86_64/master
+    )
+    for ref in "${reproducible_refs[@]}"; do
+        first_commit="$(ostree --repo="$repo" rev-parse "$ref")"
+        second_commit="$(ostree --repo="$second/repo" rev-parse "$ref")"
+        if [[ "$first_commit" != "$second_commit" ]]; then
+            printf 'release check: repeated Flatpak content differs for %s\n' "$ref" >&2
+            exit 1
+        fi
+    done
     git archive --format=tar --prefix="jamelade-${version}/" HEAD \
         | gzip -n -9 >"$second/$source_name"
     cmp --silent "$source_archive" "$second/$source_name" || {
