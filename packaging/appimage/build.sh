@@ -56,8 +56,8 @@ fetch() {
     mv -- "$temporary" "$destination"
 }
 
-glib_version=2.82.5
-glib_sha=05c2031f9bdf6b5aba7a06ca84f0b4aced28b19bf1b50c6ab25cc675277cbc3f
+glib_version=2.86.5
+glib_sha=ce85a947bb8b3c0204dbeff79aec39bcb46371c6fafb64ba5b8726c71e038d5f
 wayland_version=1.24.0
 wayland_sha=82892487a01ad67b334eca83b54317a7c86a03a89cfadacfef5211f11a5d0536
 protocols_version=1.44
@@ -91,7 +91,7 @@ layer_archive="$downloads/gtk4-layer-shell-$layer_version.tar.gz"
 electron_archive="$downloads/electron-$electron_version-linux-x64.zip"
 linuxdeploy="$downloads/linuxdeploy-$linuxdeploy_version-x86_64.AppImage"
 
-fetch "https://download.gnome.org/sources/glib/2.82/glib-$glib_version.tar.xz" \
+fetch "https://download.gnome.org/sources/glib/2.86/glib-$glib_version.tar.xz" \
     "$glib_sha" "$glib_archive"
 fetch "https://gitlab.freedesktop.org/wayland/wayland/-/releases/$wayland_version/downloads/wayland-$wayland_version.tar.xz" \
     "$wayland_sha" "$wayland_archive"
@@ -252,11 +252,15 @@ fi
 
 pixbuf_module_dir="$(pkg-config --variable=gdk_pixbuf_moduledir gdk-pixbuf-2.0)"
 pixbuf_binary_dir="$(pkg-config --variable=gdk_pixbuf_binarydir gdk-pixbuf-2.0)"
+pixbuf_query_loaders="$pixbuf_binary_dir/gdk-pixbuf-query-loaders"
+if [[ ! -x "$pixbuf_query_loaders" ]]; then
+    pixbuf_query_loaders="$(dirname "$pixbuf_binary_dir")/gdk-pixbuf-query-loaders"
+fi
 test -d "$pixbuf_module_dir"
-test -x "$pixbuf_binary_dir/gdk-pixbuf-query-loaders"
+test -x "$pixbuf_query_loaders"
 mkdir -p "$appdir/usr/lib/gdk-pixbuf-2.0/2.10.0/loaders"
 cp -a "$pixbuf_module_dir/." "$appdir/usr/lib/gdk-pixbuf-2.0/2.10.0/loaders/"
-install -Dm755 "$pixbuf_binary_dir/gdk-pixbuf-query-loaders" \
+install -Dm755 "$pixbuf_query_loaders" \
     "$appdir/usr/bin/gdk-pixbuf-query-loaders"
 
 licences="$appdir/usr/share/licenses/io.github.Jamelade.Jamelade"
@@ -314,6 +318,8 @@ while IFS= read -r library; do
     host_path="$(ldconfig -p | awk -v name="$soname" \
         '$1 == name && !found {print $NF; found=1}')"
     [[ -n "$host_path" ]] || continue
+    host_path="$(readlink -f "$host_path")"
+    [[ -f "$host_path" ]] || continue
     owner="$(dpkg-query -S "$host_path" 2>/dev/null || true)"
     owner="${owner%%$'\n'*}"
     package="${owner%%:*}"
@@ -324,6 +330,12 @@ while IFS= read -r library; do
     install -Dm644 "$copyright" "$system_licences/$package_dir/copyright"
     printf '%s\t%s\n' "$soname" "$package" >>"$system_licences/PACKAGES.tsv"
 done < <(find "$appdir/usr/lib" \( -type f -o -type l \) | sort)
+if [[ "$(wc -l <"$system_licences/PACKAGES.tsv")" -le 1 ]] \
+    || ! find "$system_licences" -mindepth 2 -name copyright \
+        -print -quit | grep -q .; then
+    printf 'AppImage build: system-library licence inventory is empty\n' >&2
+    exit 1
+fi
 
 export OUTPUT="$appimage"
 "$linuxdeploy" --appimage-extract-and-run \

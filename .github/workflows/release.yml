@@ -106,12 +106,12 @@ jobs:
           sudo apt-get install --yes --no-install-recommends \
             appstream bison build-essential ca-certificates curl \
             desktop-file-utils file flex gettext git gperf jq \
-            libasound2-dev libatk-bridge2.0-dev libatk1.0-dev \
+            libappstream-dev libasound2-dev libatk-bridge2.0-dev libatk1.0-dev \
             libcairo2-dev libcups2-dev libdbus-1-dev libdrm-dev \
             libegl1-mesa-dev libepoxy-dev libexpat1-dev libffi-dev \
             libfontconfig1-dev libfreetype-dev libfribidi-dev \
             libgbm-dev libgdk-pixbuf-2.0-dev libgl1-mesa-dev \
-            libgraphene-1.0-dev libharfbuzz-dev libjpeg-dev \
+            libgraphene-1.0-dev libgtk-3-dev libharfbuzz-dev libjpeg-dev \
             libnss3-dev libpango1.0-dev libpcre2-dev libpixman-1-dev \
             libpng-dev libthai-dev libtiff-dev libwayland-dev \
             libx11-dev libx11-xcb-dev libxcb-render0-dev \
