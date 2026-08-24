@@ -1585,16 +1585,16 @@ mod tests {
     #[test]
     fn artist_page_requests_the_editorial_notes_extension() {
         assert_eq!(
-            catalog_artist_path("de", "1147783278", true),
-            "/catalog/de/artists/1147783278?include=albums&extend=editorialNotes"
+            catalog_artist_path("de", "1234567890", true),
+            "/catalog/de/artists/1234567890?include=albums&extend=editorialNotes"
         );
         assert_eq!(
             catalog_artist_path("de", "id%2Fwith%3Fpunctuation", false),
             "/catalog/de/artists/id%2Fwith%3Fpunctuation?extend=editorialNotes"
         );
         assert_eq!(
-            catalog_artist_path("us", "1147783278", false),
-            "/catalog/us/artists/1147783278?extend=editorialNotes"
+            catalog_artist_path("us", "1234567890", false),
+            "/catalog/us/artists/1234567890?extend=editorialNotes"
         );
     }
 

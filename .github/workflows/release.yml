@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - "v*.*.*-*"
+      - "v*.*.*"
 
 permissions:
   contents: read
@@ -86,9 +86,79 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  appimage:
+    name: Build AppImage
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install the AppImage build floor
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            appstream bison build-essential ca-certificates curl \
+            desktop-file-utils file flex gettext git gperf jq \
+            libasound2-dev libatk-bridge2.0-dev libatk1.0-dev \
+            libcairo2-dev libcups2-dev libdbus-1-dev libdrm-dev \
+            libegl1-mesa-dev libepoxy-dev libexpat1-dev libffi-dev \
+            libfontconfig1-dev libfreetype-dev libfribidi-dev \
+            libgbm-dev libgdk-pixbuf-2.0-dev libgl1-mesa-dev \
+            libgraphene-1.0-dev libharfbuzz-dev libjpeg-dev \
+            libnss3-dev libpango1.0-dev libpcre2-dev libpixman-1-dev \
+            libpng-dev libthai-dev libtiff-dev libwayland-dev \
+            libx11-dev libx11-xcb-dev libxcb-render0-dev \
+            libxcb-shm0-dev libxcb1-dev libxcomposite-dev \
+            libxcursor-dev libxdamage-dev libxext-dev libxfixes-dev \
+            libxi-dev libxinerama-dev libxkbcommon-dev \
+            libxkbcommon-x11-dev libxrandr-dev libxrender-dev \
+            libxml2-dev ninja-build patchelf pkg-config python3-pip \
+            sassc unzip xz-utils zlib1g-dev
+          python3 -m pip install --break-system-packages meson==1.7.2
+          rustc --version
+          meson --version
+
+      - name: Cache AppImage toolchain builds
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            .appimage-build/downloads
+            .appimage-build/prefix
+            .appimage-build/sources
+          key: appimage-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'packaging/appimage/build.sh') }}
+          restore-keys: appimage-${{ runner.os }}-
+
+      - name: Build and audit AppImage
+        run: ./packaging/appimage/build.sh
+
+      - name: Verify AppImage assets
+        run: |
+          set -euo pipefail
+          cd appimage-dist
+          sha256sum --check SHA256SUMS
+          test "$(find . -maxdepth 1 -name '*.AppImage' | wc -l)" -eq 1
+
+      - name: Preserve verified AppImage candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: jamelade-${{ github.ref_name }}-appimage-candidate
+          path: appimage-dist/
+          if-no-files-found: error
+          retention-days: 1
+
   publish:
-    name: Publish GitHub prerelease
-    needs: package
+    name: Publish GitHub release
+    needs: [package, appimage]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -97,17 +167,31 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: jamelade-${{ github.ref_name }}-release-candidate
-          path: dist
+          path: flatpak-dist
+
+      - name: Restore verified AppImage candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: jamelade-${{ github.ref_name }}-appimage-candidate
+          path: appimage-dist
 
       - name: Verify release assets again
         run: |
           set -euo pipefail
+          (cd flatpak-dist && sha256sum --check SHA256SUMS)
+          (cd appimage-dist && sha256sum --check SHA256SUMS)
+          mkdir dist
+          find flatpak-dist -maxdepth 1 -type f ! -name SHA256SUMS -exec cp {} dist/ \;
+          find appimage-dist -maxdepth 1 -type f ! -name SHA256SUMS -exec cp {} dist/ \;
           cd dist
-          sha256sum --check SHA256SUMS
           test "$(find . -maxdepth 1 -name '*.flatpak' | wc -l)" -eq 1
+          test "$(find . -maxdepth 1 -name '*.AppImage' | wc -l)" -eq 1
           test "$(find . -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 1
+          sha256sum -- *.flatpak *.AppImage *.tar.gz \
+            BUILDINFO.txt APPIMAGE-BUILDINFO.txt >SHA256SUMS
+          sha256sum --check SHA256SUMS
 
-      - name: Publish GitHub prerelease
+      - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -115,10 +199,11 @@ jobs:
           version=${GITHUB_REF_NAME#v}
           notes="$RUNNER_TEMP/release-notes.md"
           cat >"$notes" <<EOF
-          Jamelade's first public beta packages the privacy-reviewed release
-          source as one cross-distribution x86_64 Flatpak.
+          Jamelade ${version} packages the reviewed source as an x86_64 Flatpak
+          and a secondary x86_64 AppImage. Flatpak is recommended because it
+          adds an outer application sandbox.
 
-          ### Install
+          ### Flatpak
 
           Download \`Jamelade-${version}-x86_64.flatpak\` and \`SHA256SUMS\`,
           place them in the same directory, then run:
@@ -128,22 +213,40 @@ jobs:
           flatpak install --user ./Jamelade-${version}-x86_64.flatpak
           \`\`\`
 
+          ### AppImage
+
+          The AppImage targets Ubuntu 24.04 or newer and contemporary Fedora.
+          It keeps Chromium's renderer sandbox enabled but, like any native
+          executable, is not itself confined by Flatpak:
+
+          \`\`\`bash
+          sha256sum --ignore-missing -c SHA256SUMS
+          chmod +x Jamelade-${version}-x86_64.AppImage
+          ./Jamelade-${version}-x86_64.AppImage
+          \`\`\`
+
           ### Requirements and limitations
 
-          - x86_64 Linux with Flatpak
+          - x86_64 Linux; Flatpak or a glibc 2.39+ host for the AppImage
           - an active Apple Music subscription and network connection
           - Widevine downloads on first use; offline playback is unavailable
-          - this is an unsigned prerelease for testing
+          - both packages are unsigned; verify \`SHA256SUMS\`
+          - the AppImage fails closed on hosts that prohibit Chromium's
+            available sandbox mechanisms
 
           Jamelade is unofficial and is not affiliated with or endorsed by
           Apple Inc. See the bundled privacy and legal notices before signing in.
           EOF
 
+          release_flags=()
+          if [[ "$version" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --draft \
-            --prerelease \
+            "${release_flags[@]}" \
             --title "Jamelade ${version}" \
             --notes-file "$notes"
           gh release upload "$GITHUB_REF_NAME" dist/* \

@@ -19,7 +19,7 @@ SIDECAR  = $(DATADIR)/jamelade/sidecar
 ICON_SIZES = 16 24 32 48 64 128 256 512
 
 .PHONY: all build run test check sizes sidecar-check sidecar sidecar-run gapless footprint install install-sidecar \
-        dev-install uninstall clean flatpak flatpak-bundle release-check
+        dev-install uninstall clean flatpak flatpak-bundle appimage release-check
 all: build
 
 build:
@@ -99,6 +99,9 @@ flatpak-bundle: flatpak
 	flatpak build-bundle --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo \
 		flatpak-repo Jamelade.flatpak io.github.Jamelade.Jamelade master
 	@echo "Jamelade.flatpak — copy it anywhere and: flatpak install ./Jamelade.flatpak"
+
+appimage:
+	./packaging/appimage/build.sh
 
 release-check:
 	./scripts/release-check.sh

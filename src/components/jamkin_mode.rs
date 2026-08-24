@@ -715,7 +715,7 @@ mod tests {
 
     #[test]
     fn desktop_copy_preserves_cjk_and_rtl_text() {
-        assert_eq!(display_line("  夜に駆ける  "), "夜に駆ける");
+        assert_eq!(display_line("  テスト用の歌詞  "), "テスト用の歌詞");
         assert_eq!(display_line("  مرحبا بالعالم  "), "مرحبا بالعالم");
     }
 

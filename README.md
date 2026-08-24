@@ -146,19 +146,32 @@ launcher entry, and has no network access. Remove it with
 
 ## Install
 
-The current source is Jamelade 1.0. A matching binary release has not yet been
-published, so the supported way to try this revision is to build its **x86_64
-Flatpak**. Install the Flatpak tools and runtimes listed in
-[`packaging/flatpak/README.md`](packaging/flatpak/README.md), then run:
+The [Jamelade 1.0 release](https://github.com/Jamelade/jamelade/releases/tag/v1.0.0)
+provides an x86_64 Flatpak and AppImage with checksums. **Flatpak is the
+recommended package** because it adds an outer application sandbox:
 
 ```bash
-make flatpak-bundle
-flatpak install --user ./Jamelade.flatpak
+sha256sum --ignore-missing -c SHA256SUMS
+flatpak install --user ./Jamelade-1.0.0-x86_64.flatpak
 ```
 
-The resulting bundle records Flathub as the source for its GNOME runtime.
-Building downloads the pinned castLabs Electron playback sidecar; Widevine is
-not in the source or bundle and is downloaded by Chromium on first use.
+The secondary AppImage targets Ubuntu 24.04 or newer and contemporary Fedora:
+
+```bash
+sha256sum --ignore-missing -c SHA256SUMS
+chmod +x Jamelade-1.0.0-x86_64.AppImage
+./Jamelade-1.0.0-x86_64.AppImage
+```
+
+The AppImage keeps Chromium's renderer sandbox enabled but, like any native
+executable, is not itself confined from the user's files. It deliberately
+fails instead of adding a sandbox-disabling fallback on incompatible hosts.
+See [`packaging/appimage/README.md`](packaging/appimage/README.md).
+
+To build the Flatpak from source, install the tools and runtimes in
+[`packaging/flatpak/README.md`](packaging/flatpak/README.md), then run
+`make flatpak-bundle`. Both packages download Widevine through Chromium on
+first use; Widevine is absent from the source and release artifacts.
 
 The older
 [0.10 beta bundle](https://github.com/Jamelade/jamelade/releases/tag/v0.10.0-beta.1)
@@ -176,6 +189,8 @@ remains available for testing, but it predates the 1.0 browser-broker design.
 - **No offline playback.** Linux Widevine does not provide the persistent
   licences Apple Music downloads require.
 - **x86_64 only.** A compatible ARM Widevine CDM is not available on Linux.
+- **AppImage has no outer sandbox.** It inherits the invoking user's normal
+  filesystem permissions. Use Flatpak when application confinement matters.
 - **A Chromium sidecar is unavoidable.** WebKitGTK and GStreamer cannot decode
   Apple Music's protected streams.
 - **Apple can change the service.** Jamelade relies on Apple's MusicKit web

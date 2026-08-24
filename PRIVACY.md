@@ -56,9 +56,12 @@ in-memory lyric cache when lyric consent changes.
 
 Jamelade stores preferences, bounded artwork and playlist caches, the encrypted
 Apple-cookie vault, and Chromium's downloaded Widevine component in its own XDG
-directories. It requests no broad home-directory access in the Flatpak. Sign
-out removes Jamelade's saved Apple session. Uninstalling without deleting app
-data may leave local settings and caches behind.
+directories. It requests no broad home-directory access in the Flatpak. The
+AppImage is a native executable and therefore inherits the invoking user's
+normal filesystem permissions, although Jamelade's code continues to use only
+its documented XDG locations. Sign out removes Jamelade's saved Apple session.
+Uninstalling without deleting app data may leave local settings and caches
+behind.
 
 ## Issue reports
 

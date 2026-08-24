@@ -46,6 +46,11 @@ dist/
 .payload-audit/
 .test-pkgconfig/
 
+# AppImage build output
+.appimage-build/
+appimage-dist/
+*.AppImage
+
 # fetched on demand by packaging/flatpak/generate-sources.sh
 packaging/flatpak/.flatpak-cargo-generator.py
 # Any bundle, not one spelled-out name. A named entry was renamed along with

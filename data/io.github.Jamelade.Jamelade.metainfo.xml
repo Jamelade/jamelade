@@ -44,7 +44,7 @@
     <internet>always</internet>
   </requires>
   <releases>
-    <release version="1.0.0" date="2026-08-24">
+    <release version="1.0.0" date="2026-08-25">
       <description>
         <p>First complete Jamelade release with native Apple Music Home, synchronized lyrics, responsive album-aware glass, artist pages, and selectable Jamkin companions.</p>
       </description>

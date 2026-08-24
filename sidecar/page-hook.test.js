@@ -98,7 +98,7 @@ function harness() {
 test('the browser broker permits named Apple routes and refuses arbitrary URLs', async () => {
   const app = harness()
   app.send({ cmd: 'apiRequest', requestId: 7, method: 'get', path: '/catalog/de/albums/123?include=tracks' })
-  app.send({ cmd: 'apiRequest', requestId: 9, method: 'get', path: '/catalog/de/artists/1147783278?include=albums&extend=editorialNotes' })
+  app.send({ cmd: 'apiRequest', requestId: 9, method: 'get', path: '/catalog/de/artists/1234567890?include=albums&extend=editorialNotes' })
   app.send({ cmd: 'apiRequest', requestId: 8, method: 'get', path: '//example.com/collect' })
   await new Promise((resolve) => setImmediate(resolve))
 
@@ -109,7 +109,7 @@ test('the browser broker permits named Apple routes and refuses arbitrary URLs',
     },
     {
       method: 'get',
-      path: '/v1/catalog/de/artists/1147783278?include=albums&extend=editorialNotes',
+      path: '/v1/catalog/de/artists/1234567890?include=albums&extend=editorialNotes',
     },
   ])
   const accepted = app.events.find((event) => event.event === 'api-response' && event.requestId === 7)

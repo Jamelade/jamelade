@@ -9,7 +9,16 @@ Jamelade is an unofficial Apple Music client. It has no telemetry, ads,
 Jamelade account, remote configuration, or silent application updater. Apple
 playback still requires a networked Chromium/Widevine boundary.
 
-## Flatpak permissions
+## Package isolation
+
+The Flatpak is the recommended package because its manifest adds an outer
+application sandbox. The AppImage runs as an ordinary native user process: the
+same network allowlists, credential boundary, bounded storage, and Chromium
+renderer sandbox still apply, but the host does not confine its filesystem
+access. The AppImage never supplies a Chromium sandbox-disabling flag and fails
+closed on hosts that prohibit Chromium's available sandbox mechanisms.
+
+### Flatpak permissions
 
 | Permission | Purpose |
 | --- | --- |
@@ -66,7 +75,8 @@ the response, extracts bounded plain text, and creates no disk cache.
 
 ## Local storage
 
-Flatpak state lives below `~/.var/app/io.github.Jamelade.Jamelade/`.
+Flatpak state lives below `~/.var/app/io.github.Jamelade.Jamelade/`. The
+AppImage follows the normal XDG config and cache roots instead.
 
 | Data | Handling |
 | --- | --- |

@@ -243,22 +243,24 @@ mod tests {
 
     #[test]
     fn accepts_only_the_expected_apple_canonical_redirect() {
-        let good = reqwest::Url::parse("https://music.apple.com/us/artist/beach-bunny/1147783278")
-            .unwrap();
-        let wrong_id =
-            reqwest::Url::parse("https://music.apple.com/us/artist/beach-bunny/9").unwrap();
-        let wrong_host =
-            reqwest::Url::parse("https://music.apple.com.example/us/artist/beach-bunny/1147783278")
+        let good =
+            reqwest::Url::parse("https://music.apple.com/us/artist/synthetic-artist/1234567890")
                 .unwrap();
+        let wrong_id =
+            reqwest::Url::parse("https://music.apple.com/us/artist/synthetic-artist/9").unwrap();
+        let wrong_host = reqwest::Url::parse(
+            "https://music.apple.com.example/us/artist/synthetic-artist/1234567890",
+        )
+        .unwrap();
 
-        assert!(trusted_artist_redirect(&good, "1147783278"));
-        assert!(!trusted_artist_redirect(&wrong_id, "1147783278"));
-        assert!(!trusted_artist_redirect(&wrong_host, "1147783278"));
+        assert!(trusted_artist_redirect(&good, "1234567890"));
+        assert!(!trusted_artist_redirect(&wrong_id, "1234567890"));
+        assert!(!trusted_artist_redirect(&wrong_host, "1234567890"));
     }
 
     #[test]
     fn rejects_non_numeric_catalog_ids() {
-        assert!(valid_catalog_id("1147783278"));
+        assert!(valid_catalog_id("1234567890"));
         assert!(!valid_catalog_id(""));
         assert!(!valid_catalog_id("r.library-id"));
         assert!(!valid_catalog_id("1/../../elsewhere"));
@@ -268,18 +270,18 @@ mod tests {
     fn extracts_only_the_requested_explicit_artist_biography() {
         let html = r#"<html><head>
             <script id=schema:music-group type="application/ld+json">
-              {"description":"Listen to music by Beach Bunny on Apple Music."}
+              {"description":"Listen to music by Synthetic Artist on Apple Music."}
             </script>
             <script type="application/json" id="serialized-server-data">
               {"data":{"items":[
                 {"id":"artist-bio - 9","modalPresentationDescriptor":{"paragraphText":"Wrong artist."}},
-                {"id":"artist-bio - 1147783278","modalPresentationDescriptor":{"paragraphText":"A <i>real</i> biography &amp; nothing else."}}
+                {"id":"artist-bio - 1234567890","modalPresentationDescriptor":{"paragraphText":"A <i>synthetic</i> biography &amp; nothing else."}}
               ]}}
             </script></head></html>"#;
 
         assert_eq!(
-            biography_from_page(html, "1147783278").as_deref(),
-            Some("A real biography & nothing else.")
+            biography_from_page(html, "1234567890").as_deref(),
+            Some("A synthetic biography & nothing else.")
         );
         assert_eq!(biography_from_page(html, "8"), None);
     }
@@ -287,8 +289,8 @@ mod tests {
     #[test]
     fn missing_artist_bio_does_not_turn_page_metadata_into_a_biography() {
         let html = r#"<script id='serialized-server-data' type='application/json'>
-            {"data":{"description":"Listen to music by Finishing Move Inc. on Apple Music."}}
+            {"data":{"description":"Listen to music by No Biography Artist on Apple Music."}}
             </script>"#;
-        assert_eq!(biography_from_page(html, "1152686264"), None);
+        assert_eq!(biography_from_page(html, "9876543210"), None);
     }
 }
