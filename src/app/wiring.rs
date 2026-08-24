@@ -57,7 +57,7 @@ pub(super) fn connect(
     model.volume_osd.sit_below_the_header(&widgets.content_bars);
 }
 
-/// Build the sidebar's five rows from [`View::SIDEBAR`].
+/// Build the sidebar's fixed rows from [`View::SIDEBAR`].
 ///
 /// They were five near-identical `ListBoxRow`s in `view!` — 126 lines saying
 /// one thing five times, each carrying a comment repeating its own index.
@@ -69,7 +69,7 @@ pub(super) fn connect(
 /// by `sync_section_spinners`.
 fn sidebar_rows(model: &mut AppModel, widgets: &Widgets, sender: &ComponentSender<AppModel>) {
     // A pin's position among the *pins*, which is what a reorder moves — not its
-    // position among the rows, which counts the five sections above it.
+    // position among the rows, which counts the fixed sections above it.
     let mut pin_index = 0usize;
     for entry in model.sidebar_rows.clone() {
         let content = gtk::Box::new(gtk::Orientation::Horizontal, 12);
@@ -106,7 +106,7 @@ fn sidebar_rows(model: &mut AppModel, widgets: &Widgets, sender: &ComponentSende
         // through the content pane, not through a sidebar row. A pin has no
         // spinner either — it opens a page, which carries its own.
         if let SidebarRow::Section(view) = entry
-            && !matches!(view, View::Search | View::Lyrics)
+            && view != View::Search
         {
             let spinner = adw::Spinner::new();
             spinner.set_size_request(16, 16);

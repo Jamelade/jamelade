@@ -148,14 +148,7 @@ impl AppModel {
         generation: u64,
         offset: usize,
     ) {
-        let Some(tokens) = &self.tokens else {
-            return;
-        };
-        let client = Client::new(
-            tokens.developer_token.clone(),
-            tokens.music_user_token.clone(),
-            tokens.storefront.clone(),
-        );
+        let Some(client) = self.client() else { return };
         let term = self.catalog_query.trim().to_owned();
         if term.is_empty() {
             return;
@@ -643,21 +636,23 @@ impl AppModel {
         );
     }
 
-    /// An API client for the current tokens, or `None` if we have none yet.
+    /// An API client for the current browser session, or `None` if either half
+    /// of the broker is not ready yet.
     ///
-    /// Built per request rather than cached: the developer token is re-harvested
-    /// and can be replaced mid-session (rule 7).
+    /// Built per request so a supervised sidecar restart cannot leave clients
+    /// pointing at the dead broker instance.
     pub(super) fn client(&self) -> Option<Client> {
-        let tokens = self.tokens.as_ref()?;
+        let session = self.apple_session.as_ref()?;
+        let broker = self.sidecar.as_ref()?.broker();
         Some(Client::new(
-            tokens.developer_token.clone(),
-            tokens.music_user_token.clone(),
-            tokens.storefront.clone(),
+            broker,
+            session.storefront.clone(),
+            session.authorized,
         ))
     }
 
     pub(super) fn load_library(&mut self, sender: &ComponentSender<Self>) {
-        let Some(tokens) = &self.tokens else {
+        let Some(session) = &self.apple_session else {
             self.toast("Not connected yet");
             return;
         };
@@ -673,8 +668,8 @@ impl AppModel {
         // A library request without a user token cannot succeed — `/me/library`
         // answers 403 "Authentication required". Better to skip it than to
         // spend a round trip proving what the token already says.
-        if tokens.music_user_token.is_none() {
-            tracing::debug!("skipping library load: no user token yet");
+        if !session.has_user_token {
+            tracing::debug!("skipping library load: browser session is not authorized yet");
             return;
         }
         self.tried_library = true;
@@ -682,14 +677,10 @@ impl AppModel {
         // about to say. Keeping it would let a stale override outlive the fact
         // it was correcting.
         self.row_overrides.borrow_mut().clear();
-        // Built per request rather than cached: the developer token is
-        // re-harvested and can be replaced mid-session (rule 7), and a stale
-        // client 401s in a way that looks like a sign-in problem.
-        let client = Client::new(
-            tokens.developer_token.clone(),
-            tokens.music_user_token.clone(),
-            tokens.storefront.clone(),
-        );
+        let Some(client) = self.client() else {
+            self.tried_library = false;
+            return;
+        };
         self.loading_library = true;
         let generation = self.account_generation;
         tracing::info!("loading library");

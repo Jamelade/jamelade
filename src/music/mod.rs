@@ -12,5 +12,6 @@
 //! Remove this allow the moment `app/mod.rs` makes its first request.
 #![allow(dead_code)]
 
+pub(crate) mod biography;
 pub mod client;
 pub mod types;

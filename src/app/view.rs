@@ -94,7 +94,7 @@ impl View {
     ///
     /// The label is not [`View::title`]: the row says "Search" under a heading
     /// that says "Apple Music", and the narrow header has no heading to lean on.
-    pub(super) const SIDEBAR: [Row; 7] = [
+    pub(super) const SIDEBAR: [Row; 6] = [
         Row {
             view: Self::Explore,
             icon: "view-grid-symbolic",
@@ -104,11 +104,6 @@ impl View {
             view: Self::Search,
             icon: "system-search-symbolic",
             label: "Search",
-        },
-        Row {
-            view: Self::Lyrics,
-            icon: "view-list-symbolic",
-            label: "Lyrics",
         },
         Row {
             view: Self::Songs,
@@ -571,6 +566,13 @@ mod tests {
                 row.label
             );
         }
+    }
+
+    #[test]
+    fn lyrics_lives_in_the_player_instead_of_the_sidebar() {
+        let rows = sidebar_rows(&[]);
+        assert!(section_index(&rows, View::Lyrics).is_none());
+        assert!(View::SIDEBAR.iter().all(|row| row.view != View::Lyrics));
     }
 
     #[test]

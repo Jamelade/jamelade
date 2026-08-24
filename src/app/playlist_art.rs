@@ -116,7 +116,7 @@ impl State {
             };
             let cached = self.paths.get(&queued.job.key).cloned();
             // A cached library can bind before the sidecar has returned its
-            // tokens. Keep the work queued; `wake` runs when they arrive.
+            // session. Keep the work queued; `wake` runs when it arrives.
             if cached.is_none() && queued.job.covers.is_empty() && client.is_none() {
                 self.queued.push_front(queued);
                 break;
@@ -257,7 +257,9 @@ pub(super) fn carry_cached_covers(old: &[Playlist], fresh: &mut [Playlist]) {
 
 impl AppModel {
     fn playlist_art_client(&self) -> Option<Client> {
-        self.tokens.as_ref()?.music_user_token.as_ref()?;
+        if !self.apple_session.as_ref()?.has_user_token {
+            return None;
+        }
         self.client()
     }
 

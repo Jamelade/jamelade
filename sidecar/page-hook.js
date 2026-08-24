@@ -37,9 +37,6 @@ const emit = (event, payload = {}) => bridge.emit(event, payload)
 // inside it will help — check webPreferences.preload and sandbox instead.
 emit('hook-boot', {
   readyState: (typeof document !== 'undefined' && document.readyState) || 'no-document',
-  // Query strings and fragments can carry transient authentication state. The
-  // path is enough to diagnose which document received the hook.
-  href: (typeof location !== 'undefined' && `${location.origin}${location.pathname}`) || 'unknown',
 })
 
 /** Try a list of accessors and return the first that yields something. */
@@ -83,22 +80,16 @@ window.__slipmatReady = () => {
 }
 
 // ---------------------------------------------------------------------------
-// Tokens
+// Session state
 //
-// Harvested live, never cached (ARCHITECTURE.md rule 7). The developer token is
-// whatever music.apple.com is using right now, so if Apple rotates it we
-// follow automatically. Apple has moved where it hangs these more than once —
-// hence pick().
+// Credentials never leave this page world. Native code needs only the
+// storefront and two booleans; authenticated requests use MusicKit's own API
+// below, so there is no reason to copy a developer or Music User Token across
+// even the isolated renderer bridge.
 // ---------------------------------------------------------------------------
 
-function readTokens() {
+function readSession() {
   if (!music) return null
-  const developerToken = pick(
-    () => music.developerToken,
-    () => music.api && music.api.developerToken,
-    () => music._api && music._api.developerToken,
-    () => window.MusicKit._instance && window.MusicKit._instance.developerToken,
-  )
   const musicUserToken = pick(
     () => music.musicUserToken,
     () => music.api && music.api.userToken,
@@ -115,7 +106,6 @@ function readTokens() {
     () => music.storefrontId,
     () => music.api && music.api.storefrontId,
   )
-  if (!developerToken) return null
   const normalizedStorefront = String(storefront || 'us').toLowerCase()
   if (pick(() => music.isAuthorized)
     && /^[a-z]{2}$/.test(String(accountStorefront || '').toLowerCase())) {
@@ -128,28 +118,27 @@ function readTokens() {
     }
   }
   return {
-    developerToken,
-    musicUserToken: musicUserToken || null,
     storefront: /^[a-z]{2}$/.test(normalizedStorefront) ? normalizedStorefront : 'us',
     authorized: !!pick(() => music.isAuthorized),
+    hasUserToken: typeof musicUserToken === 'string' && musicUserToken.length > 0,
   }
 }
 
-let lastTokens = ''
+let lastSession = ''
 
-/// Emit tokens only when they actually change.
+/// Emit session state only when it actually changes.
 ///
-/// main.js nudges this once a second for the first ten seconds (the developer
-/// token can land after MusicKit), and unconditional emitting turned that into
+/// main.js nudges this once a second for the first ten seconds (authorization
+/// can settle after MusicKit), and unconditional emitting turned that into
 /// ten identical log lines that buried everything else.
-function pushTokens() {
-  const t = readTokens()
-  if (!t) return null
-  const fingerprint = JSON.stringify(t)
-  if (fingerprint === lastTokens) return t
-  lastTokens = fingerprint
-  emit('tokens', t)
-  return t
+function pushSession() {
+  const session = readSession()
+  if (!session) return null
+  const fingerprint = JSON.stringify(session)
+  if (fingerprint === lastSession) return session
+  lastSession = fingerprint
+  emit('session', session)
+  return session
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +151,10 @@ const STATES = [
   'ended', 'seeking', 'unknown', 'waiting', 'stalled', 'completed',
 ]
 const MAX_QUEUE_ITEMS = 2500
+const MAX_API_PATH_BYTES = 4096
+const MAX_API_BODY_BYTES = 3 * 1024 * 1024
+const API_METHOD_READY_TIMEOUT_MS = 3000
+const API_METHOD_READY_POLL_MS = 100
 
 const stateName = (n) => STATES[n] || 'unknown'
 
@@ -270,23 +263,23 @@ function wireEvents() {
   on('playbackVolumeDidChange', () => emitVolume())
 
   on('authorizationStatusDidChange', () => {
-    const t = pushTokens()
-    emit('authorization', { authorized: !!(t && t.authorized) })
+    const session = pushSession()
+    emit('authorization', { authorized: !!(session && session.authorized) })
   })
 
   // Cookie restoration can finish after the hook attaches. In that case the
   // account storefront changes without another authorization transition, and
   // failing to re-harvest it leaves the native client on the page's `/us/`
   // fallback for the rest of the run.
-  on('storefrontCountryCodeDidChange', () => pushTokens())
+  on('storefrontCountryCodeDidChange', () => pushSession())
   on('authReflectionDidComplete', () => {
-    const t = pushTokens()
+    const session = pushSession()
     // Main process consumes this locally; it is not forwarded to Rust. A
     // MusicKit object created before sign-in can retain preview-only playback
     // capability even after its token fields update. Rebuilding the document
     // once Apple's own auth reflection is complete creates the full player
     // immediately instead of making the first app restart do it by accident.
-    emit('authorization-reflected', { authorized: !!(t && t.authorized) })
+    emit('authorization-reflected', { authorized: !!(session && session.authorized) })
   })
 }
 
@@ -367,7 +360,158 @@ async function libraryWrite(kind, id, fn) {
   }
 }
 
+function validApiId(value) {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 512
+      || !/^[A-Za-z0-9._~%-]+$/.test(value)) return false
+  try {
+    decodeURIComponent(value)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function allowedApiRoute(method, pathname) {
+  const parts = pathname.split('/').filter(Boolean)
+  if (parts[0] !== 'v1') return false
+
+  if (method === 'post') {
+    return pathname === '/v1/me/library' || pathname === '/v1/me/favorites'
+  }
+  if (method !== 'get') return false
+
+  if (parts[1] === 'me') {
+    if (pathname === '/v1/me/recommendations'
+        || pathname === '/v1/me/recent/played'
+        || pathname === '/v1/me/recent/played/tracks'
+        || pathname === '/v1/me/heavy-rotation') return true
+    if (parts[2] !== 'library' || parts.length < 4 || parts.length > 6) return false
+    const kind = parts[3]
+    if (!['songs', 'albums', 'artists', 'playlists'].includes(kind)) return false
+    if (parts.length === 4) return true
+    if (!validApiId(parts[4])) return false
+    if (parts.length === 5) return true
+    return (kind === 'playlists' && parts[5] === 'tracks')
+      || (kind === 'artists' && ['albums', 'catalog'].includes(parts[5]))
+  }
+
+  if (parts[1] !== 'catalog' || !/^[a-z]{2}$/.test(parts[2] || '')) return false
+  if (parts.length === 4 && ['search', 'charts'].includes(parts[3])) return true
+  const kind = parts[3]
+  if (!['songs', 'albums', 'artists', 'playlists'].includes(kind)) return false
+  if (parts.length === 4) return true
+  if (!validApiId(parts[4])) return false
+  if (parts.length === 5) return true
+  if (kind === 'songs' && parts.length === 6 && parts[5] === 'lyrics') return true
+  if (kind === 'playlists' && parts.length === 6 && parts[5] === 'tracks') return true
+  return kind === 'artists'
+    && parts.length === 7
+    && parts[5] === 'view'
+    && ['top-songs', 'latest-release'].includes(parts[6])
+}
+
+function normalizedApiPath(method, path) {
+  if (typeof path !== 'string' || path.length === 0 || path.length > MAX_API_PATH_BYTES
+      || !path.startsWith('/') || path.startsWith('//') || path.includes('\\')
+      || path.includes('#') || /[\r\n\0]/.test(path)) return null
+  let parsed
+  try {
+    parsed = new URL('https://api.music.apple.com/v1' + path)
+  } catch {
+    return null
+  }
+  if (parsed.origin !== 'https://api.music.apple.com'
+      || !allowedApiRoute(method, parsed.pathname)) return null
+  return parsed.pathname + parsed.search
+}
+
+function apiStatus(value) {
+  const candidates = [value?.status, value?.statusCode, value?.response?.status]
+  return candidates.find((status) => Number.isInteger(status) && status >= 100 && status <= 599)
+}
+
+function apiPayload(response) {
+  if (response && typeof response === 'object'
+      && Object.prototype.hasOwnProperty.call(response, 'data')) return response.data
+  return response ?? null
+}
+
+function emitApiResponse(requestId, status, payload) {
+  let body
+  try {
+    body = JSON.stringify(payload)
+  } catch {
+    body = ''
+    status = 502
+  }
+  if (new TextEncoder().encode(body).length > MAX_API_BODY_BYTES) {
+    body = ''
+    status = 502
+  }
+  emit('api-response', { requestId, status, body })
+}
+
+function availableApiCall(method) {
+  if (method === 'get') {
+    const owner = typeof music.api?.v3?.music === 'function' ? music.api.v3 : music.api
+    return typeof owner?.music === 'function' ? owner.music.bind(owner) : null
+  }
+  if (method === 'post') {
+    return typeof music.api?.post === 'function' ? music.api.post.bind(music.api) : null
+  }
+  return null
+}
+
+async function waitForApiCall(method) {
+  const deadline = Date.now() + API_METHOD_READY_TIMEOUT_MS
+  while (true) {
+    const call = availableApiCall(method)
+    if (call) return call
+    if (Date.now() >= deadline) return null
+    await new Promise((resolve) => setTimeout(resolve, API_METHOD_READY_POLL_MS))
+  }
+}
+
+async function browserApiRequest({ requestId, method, path }) {
+  if (!Number.isSafeInteger(requestId) || requestId <= 0) {
+    throw new Error('invalid broker request id')
+  }
+  const normalized = normalizedApiPath(method, path)
+  if (!normalized) {
+    emitApiResponse(requestId, 400, null)
+    return
+  }
+
+  try {
+    let response
+    if (method === 'get') {
+      const call = await waitForApiCall(method)
+      if (!call) {
+        emitApiResponse(requestId, 503, null)
+        return
+      }
+      response = await call(normalized)
+    } else if (method === 'post') {
+      const call = await waitForApiCall(method)
+      if (!call) {
+        emitApiResponse(requestId, 503, null)
+        return
+      }
+      response = await accepted(() => call(normalized))
+    } else {
+      emitApiResponse(requestId, 405, null)
+      return
+    }
+    emitApiResponse(requestId, apiStatus(response) || (method === 'post' ? 202 : 200), apiPayload(response))
+  } catch (err) {
+    // Error bodies and exception messages can echo private queries. Rust needs
+    // only the status class to choose its user-facing recovery path.
+    emitApiResponse(requestId, apiStatus(err) || 502, null)
+  }
+}
+
 const commands = {
+  apiRequest: browserApiRequest,
   async setQueue({ songs, startPosition = 0, startPlaying = true, startTimeMs = 0 }) {
     // BOTH keys, deliberately. MusicKit v3's setQueue forwards only
     // `startWith` to the queue descriptor:
@@ -523,7 +667,7 @@ const commands = {
   // Removing things. **Only MusicKit can do these**, which is why they are here
   // and not in music/client.rs with their add counterparts.
   //
-  // Verified against a real account: over REST with our harvested token,
+  // Verified against a real account: a direct REST probe of
   // `DELETE /v1/me/favorites?ids[songs]=…` answers `400 Insufficient
   // Permissions` and library removal has no documented endpoint at all. Issued
   // through MusicKit's own client, from the page and its session, both are
@@ -548,7 +692,7 @@ const commands = {
 
   authorize: () => music.authorize(),
   unauthorize: () => music.unauthorize(),
-  refreshTokens: () => pushTokens(),
+  refreshSession: () => pushSession(),
 }
 
 async function handleCommand(msg) {
@@ -586,7 +730,7 @@ async function handleCommand(msg) {
       try {
         music.storefrontId = accountStorefront
         await fn(msg)
-        pushTokens()
+        pushSession()
         emit('cmd-done', {
           cmd: msg.cmd,
           state: pick(() => music.playbackState) ?? -1,
@@ -629,10 +773,10 @@ function wire(trigger) {
 
   wireEvents()
 
-  // The developer token can land a beat after MusicKit itself. main.js also
-  // re-sends `refreshTokens` on a main-process timer, because a renderer timer
-  // cannot be relied on here.
-  pushTokens()
+  // Authorization can settle a beat after MusicKit itself. main.js also
+  // re-sends `refreshSession` on a main-process timer, because a renderer
+  // timer cannot be relied on here.
+  pushSession()
 
   emit('hook-ready', {
     trigger,

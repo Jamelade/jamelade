@@ -1,0 +1,164 @@
+# Parallel-installable browser-broker evaluation build.
+app-id: io.github.Jamelade.Jamelade.BrokerTest
+runtime: org.gnome.Platform
+runtime-version: '49'
+sdk: org.gnome.Sdk
+
+# zypak adapts Chromium's sandbox to Flatpak.
+base: org.electronjs.Electron2.BaseApp
+base-version: '25.08'
+
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+
+command: jamelade-broker-test
+
+finish-args:
+  # Playback and Widevine installation require network access.
+  - --share=network
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  # Hardware-accelerated GTK rendering.
+  - --device=dri
+  # Encrypted cookie vault; unavailable Secret Service means memory-only login.
+  - --talk-name=org.freedesktop.secrets
+  # Separate desktop media identity.
+  - --own-name=org.mpris.MediaPlayer2.JameladeBrokerTest
+  # Separate portal-managed launcher.
+  - --own-name=io.github.Jamelade.Jamelade.BrokerTest.Launcher
+  # Deliberately no access to the stable app's optional icon helper.
+  # Off-by-default Discord activity; same-user socket paths only.
+  - --filesystem=xdg-run/discord-ipc-0
+  - --filesystem=xdg-run/app/com.discordapp.Discord:create
+  - --filesystem=xdg-run/app/dev.vencord.Vesktop:create
+  # No home access.
+
+# Build-only layer-shell headers and its opt-in LD_PRELOAD compatibility shim
+# do not belong in the runtime. Jamelade links only the ordinary shared library.
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /lib/liblayer-shell-preload.so
+
+modules:
+  # Optional Desktop Jamkin overlay support.
+  - name: gtk4-layer-shell
+    buildsystem: meson
+    config-opts:
+      - -Dexamples=false
+      - -Ddocs=false
+      - -Dtests=false
+      - -Dsmoke-tests=false
+      - -Dintrospection=false
+      - -Dvapi=false
+    sources:
+      - type: archive
+        url: https://github.com/wmww/gtk4-layer-shell/archive/refs/tags/v1.3.0.tar.gz
+        sha256: 1ebb01ab14e98afd1727f68f64981c37bd23305b1f131f5667c02b94cf593192
+
+  - name: jamelade
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin
+      env:
+        CARGO_HOME: /run/build/jamelade/cargo
+        # Fixed build time plus remapped paths improve reproducibility.
+        SOURCE_DATE_EPOCH: '1787529600'
+        CARGO_INCREMENTAL: '0'
+        RUSTFLAGS: '--remap-path-prefix=/run/build/jamelade=/usr/src/jamelade'
+        # Public routing ID; not a Discord secret or token.
+        JAMELADE_DISCORD_APPLICATION_ID: '1540479400980520981'
+    sources:
+      - type: dir
+        path: ../..
+        # Generated and local audit output is never copied into the build.
+        skip:
+          - target
+          - icon-helper/target
+          - sidecar/node_modules
+          - .git
+          - .audit-cargo-home
+          - .audit-target
+          - .audit-tools
+          - .flatpak-builder
+          - .broker-test-build
+          - .broker-test-repo
+          - packaging/flatpak/.flatpak-builder
+          - build-dir
+          - flatpak-repo
+          - release-repo
+          - dist
+          - Jamelade.flatpak
+          - Jamelade-Broker-Test.flatpak
+          - Jamelade-oled-lyrics-test.flatpak
+          - Slipmat.flatpak
+      # Hashed crate archives; regenerate with generate-sources.sh.
+      - cargo-sources.json
+
+      # Pinned castLabs Electron; no npm dependency tree is bundled.
+      - type: archive
+        url: https://github.com/castlabs/electron-releases/releases/download/v43.2.0%2Bwvcus/electron-v43.2.0%2Bwvcus-linux-x64.zip
+        sha256: d69d7cb6d27651f51c106fec52c746097d064f95b2fee6966f9888e44e0cbf54
+        strip-components: 0
+        dest: electron-dist
+    build-commands:
+      - cargo --offline fetch --manifest-path Cargo.toml --verbose
+      - cargo fmt --all -- --check
+      - cargo --offline clippy --all-targets --no-default-features -- -D warnings
+      - cargo --offline clippy --all-targets --features broker-test -- -D warnings
+      # Compile both complete suites; run them outside Builder for Glycin.
+      - cargo --offline test --no-default-features --no-run
+      - cargo --offline test --features broker-test --no-run
+      - cargo --offline build --release --features broker-test --verbose
+      - install -Dm755 target/release/jamelade /app/bin/jamelade-broker-test.real
+
+      # Sidecar layout expected by electron_binary().
+      - install -Dm644 sidecar/package.json /app/share/jamelade-broker-test/sidecar/package.json
+      - install -Dm644 sidecar/main.js /app/share/jamelade-broker-test/sidecar/main.js
+      - install -Dm644 sidecar/preload.js /app/share/jamelade-broker-test/sidecar/preload.js
+      - install -Dm644 sidecar/page-hook.js /app/share/jamelade-broker-test/sidecar/page-hook.js
+      - install -Dm644 sidecar/security.js /app/share/jamelade-broker-test/sidecar/security.js
+      - install -Dm644 sidecar/auth-preload.js /app/share/jamelade-broker-test/sidecar/auth-preload.js
+      - install -Dm644 sidecar/session-vault.js /app/share/jamelade-broker-test/sidecar/session-vault.js
+      - mkdir -p /app/share/jamelade-broker-test/sidecar/node_modules/electron/dist
+      - cp -a electron-dist/. /app/share/jamelade-broker-test/sidecar/node_modules/electron/dist/
+      # zypak must be Electron's direct parent.
+      - mv /app/share/jamelade-broker-test/sidecar/node_modules/electron/dist/electron
+          /app/share/jamelade-broker-test/sidecar/node_modules/electron/dist/electron.bin
+      - chmod +x /app/share/jamelade-broker-test/sidecar/node_modules/electron/dist/electron.bin
+      - install -Dm755 packaging/flatpak/electron-shim
+          /app/share/jamelade-broker-test/sidecar/node_modules/electron/dist/electron
+
+      # Launcher selects the test assets and sidecar.
+      - install -Dm755 packaging/flatpak/jamelade-broker-test-launcher /app/bin/jamelade-broker-test
+
+      - install -Dm644 data/io.github.Jamelade.Jamelade.BrokerTest.desktop /app/share/applications/io.github.Jamelade.Jamelade.BrokerTest.desktop
+      - install -Dm644 data/io.github.Jamelade.Jamelade.BrokerTest.Launcher.desktop /app/share/applications/io.github.Jamelade.Jamelade.BrokerTest.Launcher.desktop
+      - install -Dm644 data/io.github.Jamelade.Jamelade.BrokerTest.metainfo.xml
+          /app/share/metainfo/io.github.Jamelade.Jamelade.BrokerTest.metainfo.xml
+      - install -Dm644 data/icons/hicolor/symbolic/apps/io.github.Jamelade.Jamelade-symbolic.svg
+          /app/share/icons/hicolor/symbolic/apps/io.github.Jamelade.Jamelade.BrokerTest-symbolic.svg
+      - install -Dm644 data/icons/hicolor/16x16/apps/io.github.Jamelade.Jamelade.png /app/share/icons/hicolor/16x16/apps/io.github.Jamelade.Jamelade.BrokerTest.png
+      - install -Dm644 data/icons/hicolor/24x24/apps/io.github.Jamelade.Jamelade.png /app/share/icons/hicolor/24x24/apps/io.github.Jamelade.Jamelade.BrokerTest.png
+      - install -Dm644 data/icons/hicolor/32x32/apps/io.github.Jamelade.Jamelade.png /app/share/icons/hicolor/32x32/apps/io.github.Jamelade.Jamelade.BrokerTest.png
+      - install -Dm644 data/icons/hicolor/48x48/apps/io.github.Jamelade.Jamelade.png /app/share/icons/hicolor/48x48/apps/io.github.Jamelade.Jamelade.BrokerTest.png
+      - install -Dm644 data/icons/hicolor/64x64/apps/io.github.Jamelade.Jamelade.png /app/share/icons/hicolor/64x64/apps/io.github.Jamelade.Jamelade.BrokerTest.png
+      - install -Dm644 data/icons/hicolor/128x128/apps/io.github.Jamelade.Jamelade.png /app/share/icons/hicolor/128x128/apps/io.github.Jamelade.Jamelade.BrokerTest.png
+      - install -Dm644 data/icons/hicolor/256x256/apps/io.github.Jamelade.Jamelade.png /app/share/icons/hicolor/256x256/apps/io.github.Jamelade.Jamelade.BrokerTest.png
+      - install -Dm644 data/icons/hicolor/512x512/apps/io.github.Jamelade.Jamelade.png /app/share/icons/hicolor/512x512/apps/io.github.Jamelade.Jamelade.BrokerTest.png
+      - install -Dm644 data/companions/launcher/jambun.png /app/share/icons/hicolor/512x512/apps/io.github.Jamelade.Jamelade.BrokerTest.jambun.png
+      - install -Dm644 data/companions/launcher/jampam.png /app/share/icons/hicolor/512x512/apps/io.github.Jamelade.Jamelade.BrokerTest.jampam.png
+      - install -Dm644 data/companions/launcher/jamjoe.png /app/share/icons/hicolor/512x512/apps/io.github.Jamelade.Jamelade.BrokerTest.jamjoe.png
+      - install -Dm644 data/companions/jambun.png /app/share/jamelade-broker-test/companions/jambun.png
+      - install -Dm644 data/companions/jampam.png /app/share/jamelade-broker-test/companions/jampam.png
+      - install -Dm644 data/companions/jamjoe.png /app/share/jamelade-broker-test/companions/jamjoe.png
+      - mkdir -p /app/share/jamelade-broker-test/companions/launcher
+      - cp -a data/companions/launcher/. /app/share/jamelade-broker-test/companions/launcher/
+      - mkdir -p /app/share/jamelade-broker-test/companions/animated
+      - cp -a data/companions/animated/jambun data/companions/animated/jampam
+          data/companions/animated/jamjoe /app/share/jamelade-broker-test/companions/animated/
+      - mkdir -p /app/share/jamelade-broker-test/companions/animated-hq
+      - cp -a data/companions/animated-hq/jambun data/companions/animated-hq/jampam
+          data/companions/animated-hq/jamjoe /app/share/jamelade-broker-test/companions/animated-hq/

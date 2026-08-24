@@ -5,35 +5,24 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 # Lyrics sources
 
-Jamelade does not bundle lyrics or save fetched lyrics to disk. It tries
-providers in order and stops after the first usable result.
+Jamelade tries sources sequentially and stops at the first usable result.
+Successful or empty results stay in a bounded memory cache and are never
+written as listening history.
 
-## Apple Music
+| Source | Default | Data sent |
+| --- | --- | --- |
+| Apple Music | On with the Apple connection | Numeric catalog song ID through MusicKit's authenticated browser client |
+| LRCLIB | Off | Title, artist, album, duration, and IP address |
+| Lyrics.ovh | Off | Artist, title, and IP address; the service may query downstream lyric sites |
 
-Apple Music is the default source for signed-in users. Jamelade sends the
-numeric catalogue song ID to Apple's API and parses the returned timed lyrics
-locally. This adds no recipient beyond the service already used for playback.
+Each third-party source requires its own consent. Its HTTP client has no Apple
+header, cookie, token, account ID, or redirect permission. Apple JSON is capped
+at 2 MiB; third-party JSON is capped at 256 KiB and requires a JSON content
+type. Apple TTML is parsed as bounded streaming XML with DTDs rejected.
 
-## LRCLIB
+Changing provider consent or signing out clears the in-memory cache. Jamelade
+does not use scraped service tokens, unofficial account APIs, certificate
+bypasses, or silent aggregator fallbacks.
 
-LRCLIB is an optional fallback and is off by default. When enabled, it receives
-the track title, artist, album, duration, and the requester's IP address. It
-receives no Apple cookie, token, account ID, or playlist data.
-
-LRCLIB's software is open source, but that licence does not grant rights in the
-lyric text returned by its database. Jamelade therefore treats fetched lyrics
-as transient display data rather than redistributable project content.
-
-## Privacy and safety limits
-
-- Apple and LRCLIB use separate HTTP clients.
-- Requests use fixed HTTPS origins and refuse redirects.
-- Apple responses are capped at 2 MiB; third-party responses at 256 KiB.
-- TTML and JSON are validated before display.
-- At most 64 results remain in memory.
-- The cache clears on sign-out or when lyrics consent changes.
-
-New providers must use HTTPS, minimize track metadata, avoid borrowed account
-tokens and scraping, document where requests go, and remain separately
-opt-in. A provider's code licence must not be mistaken for a licence to
-republish song lyrics.
+Lyrics remain copyrighted material supplied by their respective service and
+rightsholders; Jamelade does not claim ownership or relicensing rights.

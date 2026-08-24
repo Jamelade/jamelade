@@ -3,10 +3,8 @@
 
 //! Album and artist pages — the pages you push into from a search result.
 //!
-//! Not a relm4 `Component`. A component is a fixed slot in the widget tree, and
-//! these are the opposite: created on a click, stacked, and dropped when you
-//! navigate back. So this is a plain struct that owns its widgets and reports
-//! clicks through closures the caller supplies.
+//! These are created on demand, stacked, and dropped on navigation, so a plain
+//! widget-owning struct fits better than a fixed-slot relm4 `Component`.
 //!
 //! **Pages are addressed by id, never by their position in the stack.** Same
 //! rule as everything else here: by the time a click arrives the stack may have
@@ -123,6 +121,7 @@ pub struct DetailActions {
     pub play: Box<dyn Fn()>,
     pub shuffle: Box<dyn Fn()>,
     pub copy_link: Box<dyn Fn()>,
+    pub album_artist: Box<dyn Fn()>,
     pub request_art: ArtRequest,
     pub artist_activate: Box<dyn Fn(ArtistActivate)>,
     pub toggle_sidebar: Box<dyn Fn()>,
@@ -149,6 +148,8 @@ pub struct DetailPage {
     cover: Cover,
     title: gtk::Label,
     subtitle: gtk::Label,
+    album_artist: gtk::Button,
+    album_artist_label: gtk::Label,
     meta: gtk::Label,
     actions: gtk::Box,
     copy_link: gtk::Button,
@@ -169,6 +170,7 @@ impl DetailPage {
             play: on_play,
             shuffle: on_shuffle,
             copy_link: on_copy_link,
+            album_artist: on_album_artist,
             request_art,
             artist_activate: on_artist_activate,
             toggle_sidebar: on_toggle_sidebar,
@@ -187,15 +189,8 @@ impl DetailPage {
             .justify(gtk::Justification::Center)
             .label(heading)
             .build();
-        // **Bounded on both axes.** This holds a curator's name most of the
-        // time — two or three words — but falls back to a playlist's blurb,
-        // and Apple's blurbs are paragraphs. Unbounded, one of those pushed the
-        // cover, the buttons and the whole track list off the bottom of the
-        // window, so the page opened showing prose and no music.
-        //
-        // `lines` needs both `wrap` and an ellipsize mode to take effect;
-        // `max_width_chars` caps how wide it grows before wrapping, so a blurb
-        // does not stretch to the full width of a maximised window either.
+        // Bound both axes: Apple subtitles can otherwise push the cover and
+        // track list out of view. `lines` needs wrap plus ellipsizing.
         let subtitle = gtk::Label::builder()
             .css_classes(["title-4", "dim-label"])
             .wrap(true)
@@ -204,6 +199,18 @@ impl DetailPage {
             .max_width_chars(SUBTITLE_CHARS as i32)
             .justify(gtk::Justification::Center)
             .build();
+        let album_artist_label = gtk::Label::builder()
+            .css_classes(["title-4"])
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .max_width_chars(SUBTITLE_CHARS as i32)
+            .build();
+        let album_artist = gtk::Button::builder()
+            .css_classes(["flat", "player-metadata-link"])
+            .tooltip_text("Open artist")
+            .visible(false)
+            .child(&album_artist_label)
+            .build();
+        album_artist.connect_clicked(move |_| on_album_artist());
         let meta = gtk::Label::builder()
             .css_classes(["caption", "dim-label"])
             .build();
@@ -250,6 +257,7 @@ impl DetailPage {
         cover.attach_first(&banner);
         banner.append(&title);
         banner.append(&subtitle);
+        banner.append(&album_artist);
         banner.append(&meta);
         banner.append(&actions);
 
@@ -301,12 +309,9 @@ impl DetailPage {
 
         let header = adw::HeaderBar::new();
 
-        // **Only a destination shows this.** A page pushed from a grid tile has
-        // a back button and the sidebar is still behind it; a page *chosen* in
-        // the sidebar replaced what was showing, so on a collapsed window the
-        // toggle is the only way back to anywhere. Built always and revealed by
-        // `show_sidebar_toggle`, because the header is assembled here and the
-        // page does not learn how it was opened until later.
+        // Back and Sidebar are independent navigation controls. A pushed page
+        // may show both: Back leaves the album/artist, while this button only
+        // hides or reveals the sidebar without discarding the page.
         let sidebar_toggle = gtk::ToggleButton::builder()
             .icon_name("sidebar-show-symbolic")
             .tooltip_text("Toggle Sidebar")
@@ -344,6 +349,8 @@ impl DetailPage {
             artist_view,
             title,
             subtitle,
+            album_artist,
+            album_artist_label,
             meta,
             actions,
             copy_link,
@@ -385,6 +392,16 @@ impl DetailPage {
         self.set_share_link(album.share_url.clone());
         self.cover.square("media-optical-symbolic");
         self.head(&album.name, &album.artist, album.artwork.as_ref());
+        self.subtitle.set_visible(false);
+        self.album_artist_label.set_label(&album.artist);
+        self.album_artist.set_visible(!album.artist.is_empty());
+        let can_open_artist = tracks.iter().any(|entry| entry.catalog_id().is_some());
+        self.album_artist.set_sensitive(can_open_artist);
+        self.album_artist.set_tooltip_text(Some(if can_open_artist {
+            "Open artist"
+        } else {
+            "Artist page unavailable"
+        }));
 
         let songs = tracks.len();
         let mut meta = String::new();
@@ -417,6 +434,7 @@ impl DetailPage {
     pub fn show_playlist(&mut self, playlist: &Playlist, tracks: Vec<Entry>) {
         self.set_share_link(playlist.share_url.clone());
         self.cover.square("view-list-symbolic");
+        self.album_artist.set_visible(false);
         // **The curator, or nothing.** Deliberately *not* the description as a
         // fallback — the same rule the tile already follows, and for a stronger
         // reason here. Apple's blurbs are paragraphs, so one under the title

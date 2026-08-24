@@ -23,6 +23,23 @@ use crate::music::types::Artwork;
 use crate::player::protocol::{Command, RepeatMode};
 
 impl AppModel {
+    /// The current favourite state after applying any write made since the
+    /// library was fetched. Favourites are library resources, so a catalog id
+    /// absent from the loaded library starts honestly unstarred.
+    pub(super) fn playing_favorite(&self, catalog_id: &str) -> bool {
+        let fetched = self
+            .all_tracks
+            .iter()
+            .find(|track| track.catalog_id.as_deref() == Some(catalog_id));
+        crate::components::overridden(
+            &self.row_overrides,
+            Some(catalog_id),
+            fetched.is_some_and(|track| track.favorite),
+            fetched.is_some_and(|track| track.in_library),
+        )
+        .0
+    }
+
     /// Tell the rows which one is playing, so the list shows a play marker.
     /// Notify about a new track, if the user asked for that.
     ///
@@ -147,8 +164,12 @@ impl AppModel {
             RepeatMode::All => Repeat::All,
             RepeatMode::One => Repeat::One,
         };
+        let catalog_id = item.and_then(|item| item.catalog_id.clone().or_else(|| item.id.clone()));
         let snap = Snapshot {
-            catalog_id: item.and_then(|item| item.catalog_id.clone().or_else(|| item.id.clone())),
+            favorite: catalog_id
+                .as_deref()
+                .is_some_and(|id| self.playing_favorite(id)),
+            catalog_id,
             shuffle: self.player.shuffle,
             queue_open: self.show_queue,
             lyrics_open: self.view == super::View::Lyrics,
@@ -447,12 +468,16 @@ impl AppModel {
                     let backdrop = path
                         .as_deref()
                         .and_then(|path| artwork::backdrop(path, glass_strength));
+                    let bar_backdrop = path
+                        .as_deref()
+                        .and_then(|path| artwork::bar_backdrop(path, glass_strength));
                     let palette = path.as_deref().and_then(crate::palette::for_artwork);
                     CommandMsg::Artwork {
                         generation,
                         template: t,
                         path,
                         backdrop,
+                        bar_backdrop,
                         glass_strength,
                         palette,
                     }
@@ -461,7 +486,7 @@ impl AppModel {
             }
             None => {
                 self.art_path = None;
-                crate::style::set_track_visuals(None, None);
+                crate::style::set_track_visuals(None, None, None);
                 self.now_playing.emit(NowPlayingInput::ArtworkReady(None));
                 self.player_view.emit(PlayerViewInput::Artwork(None));
                 false
@@ -480,11 +505,13 @@ impl AppModel {
         let generation = self.account_generation;
         sender.oneshot_command(async move {
             let backdrop = artwork::backdrop(&source, glass_strength);
+            let bar_backdrop = artwork::bar_backdrop(&source, glass_strength);
             CommandMsg::GlassBackdrop {
                 generation,
                 source,
                 glass_strength,
                 backdrop,
+                bar_backdrop,
             }
         });
     }

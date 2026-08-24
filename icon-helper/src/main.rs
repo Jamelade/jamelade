@@ -65,9 +65,10 @@ impl IconHelper {
 fn data_home() -> io::Result<PathBuf> {
     if let Some(value) = std::env::var_os("XDG_DATA_HOME").filter(|value| !value.is_empty()) {
         let path = PathBuf::from(value);
-        return path.is_absolute().then_some(path).ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidInput, "XDG_DATA_HOME is relative")
-        });
+        return path
+            .is_absolute()
+            .then_some(path)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "XDG_DATA_HOME is relative"));
     }
     let home = PathBuf::from(
         std::env::var_os("HOME")
@@ -124,10 +125,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
             .open(&temporary)?;
         file.write_all(bytes)?;
         file.sync_all()?;
-        fs::set_permissions(
-            &temporary,
-            std::os::unix::fs::PermissionsExt::from_mode(0o644),
-        )?;
+        fs::set_permissions(&temporary, std::os::unix::fs::PermissionsExt::from_mode(0o644))?;
         fs::rename(&temporary, path)?;
         fs::File::open(parent)?.sync_all()
     })();

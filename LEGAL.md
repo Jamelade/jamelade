@@ -13,10 +13,13 @@ Jamelade is an independent community fork of Slipmat. It is not affiliated
 with, endorsed by, sponsored by, or approved by Apple Inc. Apple can change or
 block the web services Jamelade relies on at any time.
 
-Jamelade loads `music.apple.com`, reads the developer token used by Apple's
-site, and reuses it for native Apple Music API requests. This is not Apple's
-documented MusicKit integration model. Apple's terms may restrict this use,
-and Apple can change or block the service at any time.
+Jamelade loads `music.apple.com` and asks MusicKit's authenticated browser
+client to perform a narrow, allowlisted set of Apple API requests. Apple
+cookies and MusicKit tokens stay inside that browser boundary; the native
+process receives only bounded response data. This remains an unofficial
+compatibility technique rather than Apple's documented third-party MusicKit
+integration model. Apple's terms may restrict this use, and Apple can change
+or block the service at any time.
 
 Relevant Apple sources:
 
@@ -40,11 +43,12 @@ and
 
 ## Music, artwork, metadata, and lyrics
 
-Music, cover art, editorial artwork, metadata, and lyrics displayed at runtime
-come from Apple or an optional lyrics service. Their rights remain with their
-respective owners. Jamelade's GPL licence does not grant permission to
-republish or commercially reuse that material. LRCLIB is off by default; its
-software licence does not license the lyric text it returns.
+Music, cover art, editorial artwork, metadata, artist biographies, and lyrics
+displayed at runtime come from Apple or an optional lyrics service. Their
+rights remain with their respective owners. Jamelade's GPL licence does not
+grant permission to republish or commercially reuse that material. LRCLIB and
+Lyrics.ovh are off by default; a service or software licence does not by itself
+license the text it returns.
 
 ## Jamkin artwork
 

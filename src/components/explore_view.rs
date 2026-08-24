@@ -142,7 +142,6 @@ impl ExploreView {
             return;
         }
 
-        self.sections.append(&hero());
         for section in &explore.sections {
             self.sections.append(&self.shelf(section));
         }
@@ -299,38 +298,4 @@ impl ExploreView {
         button.connect_clicked(move |_| handler(action.clone()));
         button
     }
-}
-
-fn hero() -> gtk::Box {
-    let hero = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(7)
-        .margin_bottom(2)
-        .css_classes(["explore-hero"])
-        .build();
-    hero.append(
-        &gtk::Label::builder()
-            .label("APPLE MUSIC")
-            .xalign(0.0)
-            .css_classes(["caption", "explore-kicker"])
-            .build(),
-    );
-    hero.append(
-        &gtk::Label::builder()
-            .label("Your Apple Music home, made native")
-            .xalign(0.0)
-            .wrap(true)
-            .css_classes(["title-1"])
-            .build(),
-    );
-    hero.append(
-        &gtk::Label::builder()
-            .label("Personalized shelves, stations, recent listening, heavy rotation and current charts — everything playable that Apple’s public MusicKit API returns.")
-            .xalign(0.0)
-            .wrap(true)
-            .max_width_chars(70)
-            .css_classes(["dim-label"])
-            .build(),
-    );
-    hero
 }

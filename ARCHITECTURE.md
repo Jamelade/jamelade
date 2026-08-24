@@ -6,10 +6,10 @@ SPDX-License-Identifier: GPL-3.0-or-later
 # Jamelade architecture
 
 Jamelade is a native Rust and GTK application with one deliberately narrow
-Electron sidecar. The native process owns the interface, Apple Music API
-access, local caches, settings, desktop integration, and optional services.
-The sidecar exists only because protected Apple Music playback on Linux needs
-Chromium and Widevine.
+Electron sidecar. The native process owns the interface, typed Apple data,
+local caches, settings, desktop integration, and optional services. The sidecar
+owns the authenticated Apple web session, MusicKit API transport, protected
+playback, Chromium, and Widevine.
 
 ## Design rules
 
@@ -29,8 +29,8 @@ Chromium and Widevine.
 6. **Supervise the sidecar.** Bound every pipe, queue, line, message, and retry.
    Detect process death, report it to the model, and restart with capped
    backoff instead of presenting a dead player as healthy.
-7. **Keep credentials out of ordinary storage and logs.** Harvest MusicKit
-   tokens only for the current process. Persist Apple cookies only in the
+7. **Keep credentials inside the browser boundary.** Do not copy MusicKit
+   tokens into the preload bridge or Rust. Persist Apple cookies only in the
    keyring-encrypted vault; if secure encryption is unavailable, use an
    ephemeral session. Never log raw protocol lines or credential-bearing URLs.
 8. **Never block the GTK main thread.** Network requests, image decoding,
@@ -42,9 +42,20 @@ Chromium and Widevine.
 
 ## Trust boundaries
 
-- `src/music/client.rs` sends credentials only to the fixed Apple Music API
-  origin, refuses redirects, and turns Apple's bounded TTML lyrics into native
-  line data before they reach components.
+- `src/music/client.rs` sends typed methods and relative paths to the browser
+  broker and turns bounded Apple responses, including TTML lyrics, into native
+  data. It has no Apple credential, header map, origin, or arbitrary URL.
+- `src/music/biography.rs` is a separate credential-free client for the fixed
+  public US artist-page fallback. It accepts only numeric IDs, one validated
+  canonical `music.apple.com` redirect, bounded HTML, and the explicit
+  `artist-bio` JSON entry; it has no cookie jar or browser token.
+- `sidecar/page-hook.js` allowlists Apple API routes, invokes MusicKit's own
+  authenticated client, waits a bounded three seconds when session readiness
+  precedes API-method readiness, and emits capped responses plus
+  credential-free session state.
+- `src/music/client.rs` retries only idempotent GETs, at most twice, after a
+  502/503/504 response. It never automatically repeats writes, authentication
+  failures, rate limits, or arbitrary statuses.
 - `sidecar/security.js` restricts privileged Chromium navigation, network
   destinations, renderer events, and diagnostic text.
 - `sidecar/session-vault.js` validates Apple cookies and stores only an
@@ -56,11 +67,12 @@ Chromium and Widevine.
   lyrics remain in memory.
 - `src/discord.rs` is off by default and talks only to a validated same-user
   local Discord socket.
-- `src/apple_link.rs` produces only bounded public `https://music.apple.com`
-  links and never includes an Apple cookie, token, or account identifier.
-- `icon-helper/` is an optional same-user D-Bus service with no network client.
-  It accepts only the three public Jamkin names and can replace only Jamelade's
-  fixed launcher entry.
+- `src/apple_link.rs` accepts only bounded HTTPS URLs on `music.apple.com`.
+- `icon-helper/` is an optional same-user D-Bus service. Its only method accepts
+  three fixed Jamkin names and replaces only Jamelade's launcher.
+- `scripts/update-electron-runtime.mjs` resolves only stable castLabs WVCUS
+  tags and checksummed release assets. Its scheduled workflow may open a PR;
+  it cannot merge, install, publish, or sign a release.
 
 Changes to authentication, network allowlists, navigation, storage, logging,
 the sidecar protocol, dependencies, or packaging need an explicit security and

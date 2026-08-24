@@ -54,10 +54,17 @@ impl Companion {
     }
 
     pub fn window_icon_name(self) -> &'static str {
+        #[cfg(not(feature = "broker-test"))]
         match self {
             Self::JamBun => "io.github.Jamelade.Jamelade.jambun",
             Self::JamPam => "io.github.Jamelade.Jamelade.jampam",
             Self::JamJoe => "io.github.Jamelade.Jamelade.jamjoe",
+        }
+        #[cfg(feature = "broker-test")]
+        match self {
+            Self::JamBun => "io.github.Jamelade.Jamelade.BrokerTest.jambun",
+            Self::JamPam => "io.github.Jamelade.Jamelade.BrokerTest.jampam",
+            Self::JamJoe => "io.github.Jamelade.Jamelade.BrokerTest.jamjoe",
         }
     }
 
@@ -96,9 +103,9 @@ impl Companion {
                 secondary: "#b61f55",
             },
             Self::JamJoe => Palette {
-                accent: "#a92758",
+                accent: "#a65a14",
                 foreground: "#ffffff",
-                secondary: "#d69623",
+                secondary: "#b51f52",
             },
         }
     }
@@ -273,6 +280,16 @@ mod tests {
                 companion.label()
             );
         }
+    }
+
+    #[test]
+    fn every_jamkin_has_its_own_accent() {
+        let accents: std::collections::HashSet<_> = Companion::ALL
+            .iter()
+            .map(|companion| companion.palette().accent)
+            .collect();
+        assert_eq!(accents.len(), Companion::ALL.len());
+        assert_eq!(Companion::JamJoe.palette().accent, "#a65a14");
     }
 
     #[test]

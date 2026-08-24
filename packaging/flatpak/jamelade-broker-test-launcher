@@ -1,0 +1,6 @@
+#!/bin/sh
+# Parallel evaluation profile. Flatpak's distinct app ID supplies separate XDG
+# roots; these explicit paths keep bundled assets and the sidecar unambiguous.
+export JAMELADE_SIDECAR="${JAMELADE_SIDECAR:-/app/share/jamelade-broker-test/sidecar}"
+export JAMELADE_COMPANION_DIR="${JAMELADE_COMPANION_DIR:-/app/share/jamelade-broker-test/companions}"
+exec /app/bin/jamelade-broker-test.real "$@"

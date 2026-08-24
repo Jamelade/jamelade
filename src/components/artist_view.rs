@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2026 Jamelade contributors
+// SPDX-FileCopyrightText: 2026 Miguel Rincon
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The artist destination: identity, newest release, top songs, albums and bio.
@@ -111,27 +111,19 @@ impl ArtistView {
 
     fn hero(&self, artist: &Artist) -> gtk::Box {
         let hero = gtk::Box::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .spacing(22)
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(16)
             .margin_bottom(2)
             .css_classes(["explore-hero"])
+            .build();
+        let identity = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(22)
             .build();
         let cover = Cover::new(PORTRAIT_PX);
         cover.round(&artist.name);
         let portrait_body = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         cover.attach_first(&portrait_body);
-        let portrait = gtk::Button::builder()
-            .child(&portrait_body)
-            .tooltip_text(format!("About {}", artist.name))
-            .css_classes(["flat", "circular"])
-            .build();
-        {
-            let parent = self.root.clone();
-            let name = artist.name.clone();
-            let biography = artist.biography.clone();
-            portrait.connect_clicked(move |_| show_biography(&parent, &name, &biography));
-        }
-        hero.append(&portrait);
 
         let words = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -166,7 +158,128 @@ impl ArtistView {
                     .build(),
             );
         }
-        hero.append(&words);
+
+        let biography = artist.biography.trim();
+        if biography.is_empty() {
+            portrait_body.set_tooltip_text(Some(&format!("Portrait of {}", artist.name)));
+            identity.append(&portrait_body);
+            words.append(
+                &gtk::Label::builder()
+                    .label("No biography is available from Apple Music.")
+                    .xalign(0.0)
+                    .wrap(true)
+                    .use_markup(false)
+                    .css_classes(["dim-label"])
+                    .build(),
+            );
+            identity.append(&words);
+            hero.append(&identity);
+        } else {
+            let portrait = gtk::Button::builder()
+                .child(&portrait_body)
+                .tooltip_text(format!("Expand the biography of {}", artist.name))
+                .css_classes(["flat", "circular"])
+                .build();
+            identity.append(&portrait);
+
+            let preview_row = gtk::Box::builder()
+                .orientation(gtk::Orientation::Horizontal)
+                .spacing(8)
+                .hexpand(true)
+                .build();
+            preview_row.append(
+                &gtk::Label::builder()
+                    .label(biography)
+                    .xalign(0.0)
+                    .hexpand(true)
+                    .wrap(true)
+                    .lines(3)
+                    .ellipsize(gtk::pango::EllipsizeMode::End)
+                    .use_markup(false)
+                    .css_classes(["artist-biography-preview"])
+                    .build(),
+            );
+            preview_row.append(&gtk::Image::from_icon_name("pan-down-symbolic"));
+            let preview = gtk::Button::builder()
+                .child(&preview_row)
+                .tooltip_text("Read the full artist biography")
+                .hexpand(true)
+                .css_classes(["flat", "artist-biography-toggle"])
+                .build();
+            words.append(&preview);
+            identity.append(&words);
+            hero.append(&identity);
+
+            let full = gtk::Box::builder()
+                .orientation(gtk::Orientation::Vertical)
+                .spacing(10)
+                .css_classes(["artist-biography-full"])
+                .build();
+            full.append(
+                &gtk::Label::builder()
+                    .label("ABOUT THIS ARTIST")
+                    .xalign(0.0)
+                    .css_classes(["caption", "explore-kicker"])
+                    .build(),
+            );
+            full.append(
+                &gtk::Label::builder()
+                    .label(biography)
+                    .xalign(0.0)
+                    .wrap(true)
+                    .selectable(true)
+                    .use_markup(false)
+                    .build(),
+            );
+
+            let collapse_row = gtk::Box::new(gtk::Orientation::Horizontal, 7);
+            collapse_row.append(&gtk::Label::new(Some("Show less")));
+            collapse_row.append(&gtk::Image::from_icon_name("pan-up-symbolic"));
+            let collapse = gtk::Button::builder()
+                .child(&collapse_row)
+                .tooltip_text("Collapse the artist biography")
+                .halign(gtk::Align::Start)
+                .css_classes(["flat", "artist-biography-toggle"])
+                .build();
+            full.append(&collapse);
+
+            let revealer = gtk::Revealer::builder()
+                .child(&full)
+                .reveal_child(false)
+                .transition_duration(260)
+                .transition_type(gtk::RevealerTransitionType::SlideDown)
+                .build();
+            hero.append(&revealer);
+
+            let preview_after_close = preview.clone();
+            revealer.connect_child_revealed_notify(move |revealer| {
+                if !revealer.is_child_revealed() && !revealer.reveals_child() {
+                    preview_after_close.set_visible(true);
+                }
+            });
+
+            let toggle: Rc<dyn Fn()> = Rc::new({
+                let revealer = revealer.clone();
+                let preview = preview.clone();
+                move || {
+                    let expand = !revealer.reveals_child();
+                    if expand {
+                        preview.set_visible(false);
+                    }
+                    revealer.set_reveal_child(expand);
+                }
+            });
+            {
+                let toggle = toggle.clone();
+                portrait.connect_clicked(move |_| toggle());
+            }
+            {
+                let toggle = toggle.clone();
+                preview.connect_clicked(move |_| toggle());
+            }
+            collapse.connect_clicked(move |_| toggle());
+        }
+
         self.request_cover(artist.artwork.as_ref(), cover);
         hero
     }
@@ -383,63 +496,4 @@ fn section(title: &str) -> gtk::Box {
             .build(),
     );
     section
-}
-
-fn show_biography(parent: &impl IsA<gtk::Widget>, artist: &str, biography: &str) {
-    let body = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .spacing(12)
-        .margin_top(24)
-        .margin_bottom(30)
-        .margin_start(26)
-        .margin_end(26)
-        .build();
-    body.append(
-        &gtk::Label::builder()
-            .label(artist)
-            .xalign(0.0)
-            .wrap(true)
-            .use_markup(false)
-            .css_classes(["title-2"])
-            .build(),
-    );
-    body.append(
-        &gtk::Label::builder()
-            .label("About this artist")
-            .xalign(0.0)
-            .css_classes(["caption", "explore-kicker"])
-            .build(),
-    );
-    let text = if biography.is_empty() {
-        "Apple Music does not provide a biography for this artist."
-    } else {
-        biography
-    };
-    body.append(
-        &gtk::Label::builder()
-            .label(text)
-            .xalign(0.0)
-            .wrap(true)
-            .selectable(true)
-            .use_markup(false)
-            .build(),
-    );
-
-    let scroller = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .child(&adw::Clamp::builder().maximum_size(620).child(&body).build())
-        .build();
-    scroller.add_css_class("plain-scroller");
-
-    let header = adw::HeaderBar::new();
-    let toolbar = adw::ToolbarView::builder().content(&scroller).build();
-    toolbar.add_top_bar(&header);
-
-    let dialog = adw::Dialog::builder()
-        .title(format!("About {artist}"))
-        .content_width(660)
-        .content_height(520)
-        .child(&toolbar)
-        .build();
-    dialog.present(Some(parent));
 }

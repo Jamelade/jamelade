@@ -25,7 +25,6 @@ pub(super) enum Arrival {
     /// Chosen in the sidebar. There is nothing behind it, so no back button.
     FromTheSidebar,
 }
-use crate::music::client::Client;
 use crate::music::types::{Artwork, Track};
 
 /// The most covers a mosaic uses. Fewer is fine — they divide the square
@@ -87,15 +86,10 @@ impl AppModel {
         sender: &ComponentSender<Self>,
         arrival: Arrival,
     ) {
-        let Some(tokens) = &self.tokens else {
+        let Some(client) = self.client() else {
             self.toast("Not connected yet");
             return;
         };
-        let client = Client::new(
-            tokens.developer_token.clone(),
-            tokens.music_user_token.clone(),
-            tokens.storefront.clone(),
-        );
 
         let id = self.next_page_id;
         self.next_page_id += 1;
@@ -105,6 +99,7 @@ impl AppModel {
         let play = sender.clone();
         let shuffle = sender.clone();
         let copy_link = sender.clone();
+        let album_artist = sender.clone();
         let artist_activate = sender.clone();
         let sidebar = sender.clone();
         let page = DetailPage::new(
@@ -132,6 +127,9 @@ impl AppModel {
                     })
                 }),
                 copy_link: Box::new(move || copy_link.input(AppMsg::CopyPageLink { page: id })),
+                album_artist: Box::new(move || {
+                    album_artist.input(AppMsg::OpenAlbumArtist { page: id })
+                }),
                 request_art: self.tile_art_request.clone(),
                 artist_activate: Box::new(move |target| {
                     artist_activate.input(AppMsg::ArtistActivatedOnPage { page: id, target })
@@ -158,9 +156,11 @@ impl AppModel {
         self.nav.set_animate_transitions(pushed_onto);
         self.nav.push(page.widget());
         self.nav.set_animate_transitions(true);
-        // A destination replaces what was showing, so nothing older is reachable
-        // — and the sidebar is how you leave, not a back button.
-        page.show_sidebar_toggle(!pushed_onto);
+        // Keep the sidebar independently dismissible on every detail page.
+        // A drill-down already owns a Back button, but Back and Sidebar answer
+        // different questions: popping the album must never be the price of
+        // hiding a pane that happens to be open beside it.
+        page.show_sidebar_toggle(true);
         page.set_sidebar_shown(self.show_sidebar);
         self.pages.push(page);
 

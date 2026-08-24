@@ -38,6 +38,7 @@ const {
   isAllowedRendererEvent,
   isTrustedAppleUrl,
   mayPersistCookies,
+  runtimeIdentity,
   safeErrorDetail,
   serializedSize,
 } = require('./security')
@@ -72,9 +73,10 @@ const DEBUG =
 /// unaffected, and are what ARCHITECTURE.md's "diagnose by layer" actually reads.
 const TRACE = process.env.JAMELADE_SIDECAR_TRACE === '1'
 const APPLE_MUSIC = 'https://music.apple.com/'
+const runtime = runtimeIdentity(process.env.JAMELADE_SIDECAR_IDENTITY)
 /// Where the live login lives. No `persist:` prefix: all Chromium-managed
 /// storage is memory-only. The encrypted cookie vault is the sole persistence.
-const activePartition = 'jamelade-hardened-memory'
+const activePartition = runtime.partition
 let cookieVault = null
 let playerSession = null
 let shuttingDown = false
@@ -96,9 +98,9 @@ const WINDOW_MODE = process.env.JAMELADE_SIDECAR_WINDOW || 'hidden'
 
 const READY_TIMEOUT_MS = 60_000
 const PROBE_INTERVAL_MS = 500
-/// How many times to re-ask for tokens after wiring. The developer token can
-/// land just after MusicKit; ten seconds is plenty and then it stops.
-const TOKEN_NUDGES = 10
+/// How many times to re-ask for session state after wiring. Authorization can
+/// settle just after MusicKit; ten seconds is plenty and then it stops.
+const SESSION_NUDGES = 10
 const MAX_PENDING_COMMANDS = 128
 const MAX_RENDERER_EVENTS_PER_SECOND = 60
 
@@ -130,10 +132,10 @@ const MAX_RENDERER_EVENTS_PER_SECOND = 60
 // which could mix the encrypted cookie vault and Widevine component state with
 // an unrelated raw Electron app on a native install. Must all happen before
 // app.whenReady().
-app.setName('Jamelade')
-app.setPath('userData', path.join(app.getPath('appData'), 'Jamelade'))
+app.setName(runtime.appName)
+app.setPath('userData', path.join(app.getPath('appData'), runtime.profileName))
 if (process.platform === 'linux') {
-  app.setDesktopName('io.github.Jamelade.Jamelade.Launcher.desktop')
+  app.setDesktopName(runtime.desktopName)
   // Chromium otherwise silently falls back to `basic_text` when a keyring is
   // unavailable. We detect that after app readiness and use an ephemeral
   // partition instead of writing weakly protected Apple cookies to disk.
@@ -181,7 +183,7 @@ let pending = []
 let hookReady = false
 let suspensionBlocker = null
 let probeTimer = null
-let tokenTimer = null
+let sessionTimer = null
 let loginRefreshTimer = null
 let loginRefreshPending = false
 let loginRefreshInFlight = false
@@ -394,7 +396,7 @@ async function createWindow() {
   // music.apple.com it flipped hookReady to false within seconds and it never
   // came back — `hook-ready` is emitted once per document, not once per load.
   // Every command from Rust after that was queued forever, with no error
-  // anywhere. Symptom: refreshTokens (sent straight from main.js, bypassing
+  // anywhere. Symptom: refreshSession (sent straight from main.js, bypassing
   // dispatch) kept working while setQueue vanished.
   win.webContents.on('did-start-navigation', (...args) => {
     // Electron has changed this signature across versions: older releases pass
@@ -534,13 +536,13 @@ async function refreshPlayerAfterLogin() {
 /// and then stops — so readiness cannot be detected from in there.
 /// executeJavaScript still runs, so we drive it from out here.
 function probeForMusicKit() {
-  // Probes and token nudges are module-level and always cleared first.
+  // Probes and session nudges are module-level and always cleared first.
   // They used to be per-call locals, so every re-probe (one per main-frame
-  // navigation) leaked another probe AND another 10-shot token nudger — which
-  // is why refreshTokens arrived several times a second, forever, instead of
+  // navigation) leaked another probe AND another 10-shot session nudger — which
+  // is why refreshSession arrived several times a second, forever, instead of
   // ten times at startup.
   clearInterval(probeTimer)
-  clearInterval(tokenTimer)
+  clearInterval(sessionTimer)
 
   const deadline = Date.now() + READY_TIMEOUT_MS
   let wired = false
@@ -585,16 +587,16 @@ function probeForMusicKit() {
       wired = true
       clearInterval(probeTimer)
       win.webContents.send('slipmat:wire')
-      // The developer token can appear slightly after MusicKit, so nudge a few
-      // times. `tokenTimer` is module-level and cleared at the top of this
+      // Authorization can settle slightly after MusicKit, so nudge a few
+      // times. `sessionTimer` is module-level and cleared at the top of this
       // function — a `const` here shadowed it, so the nudger was unstoppable
       // and every re-probe added another one.
       let nudges = 0
-      tokenTimer = setInterval(() => {
-        if (++nudges > TOKEN_NUDGES || !win || win.isDestroyed()) {
-          return clearInterval(tokenTimer)
+      sessionTimer = setInterval(() => {
+        if (++nudges > SESSION_NUDGES || !win || win.isDestroyed()) {
+          return clearInterval(sessionTimer)
         }
-        win.webContents.send('slipmat:command', { cmd: 'refreshTokens' })
+        win.webContents.send('slipmat:command', { cmd: 'refreshSession' })
       }, 1000)
     }
   }, PROBE_INTERVAL_MS)
@@ -807,10 +809,16 @@ app.whenReady().then(async () => {
       hookReady = true
       drainPending()
     }
-    if (ev.event === 'tokens'
+    if (ev.event === 'session'
       && ev.authorized
-      && typeof ev.musicUserToken === 'string') {
+      && ev.hasUserToken) {
       scheduleLoginPlayerRefresh()
+    }
+    if (ev.event === 'session') {
+      // The page exposes only this credential-free projection. Rust receives
+      // it unchanged; authenticated API calls stay inside the browser broker.
+      send(ev)
+      return
     }
     if (ev.event === 'authorization-reflected') {
       if (ev.authorized) refreshPlayerAfterLogin()

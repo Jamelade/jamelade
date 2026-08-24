@@ -29,9 +29,9 @@ use std::process::Stdio;
 use anyhow::{Context, Result, anyhow};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command as TokioCommand;
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex as AsyncMutex, mpsc, oneshot};
 
-use super::protocol::{Command, Event};
+use super::protocol::{ApiMethod, ApiResponse, Command, Event};
 
 /// What the reader task pushes up to `app/mod.rs`.
 #[derive(Debug)]
@@ -66,6 +66,109 @@ const EVENT_CHANNEL_CAPACITY: usize = 64;
 const COMMAND_CHANNEL_CAPACITY: usize = 256;
 const MAX_EVENT_LINE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_DIAGNOSTIC_LINE_BYTES: usize = 16 * 1024;
+const MAX_BROKER_PENDING: usize = 64;
+const MAX_BROKER_PATH_BYTES: usize = 4 * 1024;
+const BROKER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(35);
+
+type PendingBroker = std::collections::HashMap<u64, oneshot::Sender<ApiReply>>;
+
+/// A bounded, credential-free Apple Music response returned by Chromium.
+/// Debug output deliberately contains no response data.
+pub struct ApiReply {
+    pub status: u16,
+    pub body: String,
+}
+
+impl std::fmt::Debug for ApiReply {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApiReply")
+            .field("status", &self.status)
+            .field("body_bytes", &self.body.len())
+            .finish()
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum BrokerError {
+    #[error("invalid Apple Music broker request")]
+    InvalidRequest,
+    #[error("Apple Music browser broker is busy")]
+    Busy,
+    #[error("Apple Music browser broker is unavailable")]
+    Unavailable,
+    #[error("Apple Music browser request timed out")]
+    Timeout,
+}
+
+/// Cloneable request half of the sidecar. It accepts only a relative path and
+/// one of two typed methods; origins, credentials, headers and bodies remain
+/// entirely inside Chromium.
+#[derive(Clone)]
+pub struct Broker {
+    tx: mpsc::Sender<Command>,
+    pending: std::sync::Arc<AsyncMutex<PendingBroker>>,
+    next_id: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl std::fmt::Debug for Broker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Broker").finish_non_exhaustive()
+    }
+}
+
+fn valid_broker_path(path: &str) -> bool {
+    !path.is_empty()
+        && path.len() <= MAX_BROKER_PATH_BYTES
+        && path.starts_with('/')
+        && !path.starts_with("//")
+        && !path.contains("://")
+        && !path.contains('\\')
+        && !path.contains('#')
+        && !path.chars().any(char::is_control)
+}
+
+impl Broker {
+    pub async fn request(&self, method: ApiMethod, path: String) -> Result<ApiReply, BrokerError> {
+        if !valid_broker_path(&path) {
+            return Err(BrokerError::InvalidRequest);
+        }
+
+        let request_id = self
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if request_id == 0 {
+            return Err(BrokerError::Unavailable);
+        }
+
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut pending = self.pending.lock().await;
+            if pending.len() >= MAX_BROKER_PENDING {
+                return Err(BrokerError::Busy);
+            }
+            pending.insert(request_id, tx);
+        }
+
+        let command = Command::ApiRequest {
+            request_id,
+            method,
+            path,
+        };
+        if self.tx.try_send(command).is_err() {
+            self.pending.lock().await.remove(&request_id);
+            return Err(BrokerError::Unavailable);
+        }
+
+        match tokio::time::timeout(BROKER_TIMEOUT, rx).await {
+            Ok(Ok(reply)) => Ok(reply),
+            Ok(Err(_)) => Err(BrokerError::Unavailable),
+            Err(_) => {
+                self.pending.lock().await.remove(&request_id);
+                Err(BrokerError::Timeout)
+            }
+        }
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 enum BoundedLine {
@@ -126,6 +229,7 @@ where
 #[derive(Debug, Clone)]
 pub struct Handle {
     tx: mpsc::Sender<Command>,
+    broker: Broker,
     /// Per-command-kind rate window, shared by every clone of this handle.
     ///
     /// `Arc<Mutex<_>>` rather than `Rc<RefCell<_>>`: the handle is delivered to
@@ -147,6 +251,10 @@ struct Window {
 }
 
 impl Handle {
+    pub fn broker(&self) -> Broker {
+        self.broker.clone()
+    }
+
     /// Fire-and-forget, up to a ceiling.
     ///
     /// A closed channel means the child already died; the `Died` message is
@@ -348,9 +456,9 @@ fn electron_user_data_dir() -> Result<PathBuf> {
         Ok(path) if !path.is_empty() => PathBuf::from(path),
         _ => PathBuf::from(std::env::var("HOME").context("HOME is not set")?).join(".config"),
     };
-    let path = base.join("Jamelade");
+    let path = base.join(crate::SIDECAR_PROFILE_NAME);
     crate::private_storage::ensure_dir(&path)
-        .context("creating Jamelade's private data directory")?;
+        .context("creating Jamelade's private browser directory")?;
     Ok(path)
 }
 
@@ -367,6 +475,7 @@ pub fn spawn() -> Result<(Handle, mpsc::Receiver<Incoming>)> {
     let mut child = TokioCommand::new(&bin)
         .arg(format!("--user-data-dir={}", user_data.display()))
         .arg(".")
+        .env("JAMELADE_SIDECAR_IDENTITY", crate::SIDECAR_IDENTITY)
         .current_dir(&dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -430,6 +539,12 @@ pub fn spawn() -> Result<(Handle, mpsc::Receiver<Incoming>)> {
 
     let (evt_tx, evt_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<Command>(COMMAND_CHANNEL_CAPACITY);
+    let broker_pending: std::sync::Arc<AsyncMutex<PendingBroker>> = Default::default();
+    let broker = Broker {
+        tx: cmd_tx.clone(),
+        pending: broker_pending.clone(),
+        next_id: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)),
+    };
 
     // Writer task — owns stdin.
     tokio::spawn(async move {
@@ -456,6 +571,7 @@ pub fn spawn() -> Result<(Handle, mpsc::Receiver<Incoming>)> {
     // Reader task — owns stdout, and owns waiting on the child so the exit
     // status is reported on the same channel, strictly after the last event.
     let died_tx = evt_tx.clone();
+    let reader_pending = broker_pending.clone();
     tokio::spawn(async move {
         let mut lines = BufReader::new(stdout);
         loop {
@@ -465,6 +581,18 @@ pub fn spawn() -> Result<(Handle, mpsc::Receiver<Incoming>)> {
                         continue;
                     }
                     let msg = match serde_json::from_slice::<Event>(&line) {
+                        Ok(Event::ApiResponse(ApiResponse {
+                            request_id,
+                            status,
+                            body,
+                        })) => {
+                            if let Some(waiter) = reader_pending.lock().await.remove(&request_id) {
+                                let _ = waiter.send(ApiReply { status, body });
+                            } else {
+                                tracing::debug!(request_id, "late or unknown broker response");
+                            }
+                            continue;
+                        }
                         Ok(ev) => Incoming::Event(ev),
                         Err(err) => {
                             // Never log or retain the raw line: a token event
@@ -492,6 +620,8 @@ pub fn spawn() -> Result<(Handle, mpsc::Receiver<Incoming>)> {
             }
         }
 
+        // Dropping the senders wakes every outstanding caller as unavailable.
+        reader_pending.lock().await.clear();
         let reason = match child.wait().await {
             Ok(status) => format!("sidecar exited: {status}"),
             Err(err) => format!("sidecar wait failed: {err}"),
@@ -502,6 +632,7 @@ pub fn spawn() -> Result<(Handle, mpsc::Receiver<Incoming>)> {
     Ok((
         Handle {
             tx: cmd_tx,
+            broker,
             rate: Default::default(),
             queue_warned: Default::default(),
         },
@@ -525,14 +656,34 @@ mod tests {
     /// writes to; for the ceiling only the counting matters.
     fn handle() -> (Handle, mpsc::Receiver<Command>) {
         let (tx, rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
+        let pending = Default::default();
         (
             Handle {
-                tx,
+                tx: tx.clone(),
+                broker: Broker {
+                    tx,
+                    pending,
+                    next_id: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)),
+                },
                 rate: Default::default(),
                 queue_warned: Default::default(),
             },
             rx,
         )
+    }
+
+    #[test]
+    fn broker_paths_are_relative_and_bounded() {
+        assert!(valid_broker_path("/catalog/us/albums/1?include=tracks"));
+        assert!(valid_broker_path("/catalog/us/search?term=hello%20world"));
+        assert!(!valid_broker_path("https://example.com/collect"));
+        assert!(!valid_broker_path("//example.com/collect"));
+        assert!(!valid_broker_path("/catalog/us/search#fragment"));
+        assert!(!valid_broker_path("/catalog/us/search\nsecret"));
+        assert!(!valid_broker_path(&format!(
+            "/{}",
+            "x".repeat(MAX_BROKER_PATH_BYTES)
+        )));
     }
 
     #[test]

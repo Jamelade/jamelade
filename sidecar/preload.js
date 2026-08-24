@@ -9,7 +9,7 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 const MAX_EVENT_BYTES = 4 * 1024 * 1024
-const MAX_TOKEN_LENGTH = 16 * 1024
+const MAX_API_BODY_BYTES = 3 * 1024 * 1024
 const MAX_EVENT_STRING = 4096
 const MAX_EVENT_DEPTH = 8
 const MAX_EVENT_NODES = 50_000
@@ -17,6 +17,7 @@ const MAX_EVENT_ARRAY = 4096
 const MAX_EVENT_KEYS = 256
 const MAX_EVENTS_PER_SECOND = 60
 const EVENTS = new Set([
+  'api-response',
   'authorization',
   'authorization-reflected',
   'cmd-done',
@@ -32,16 +33,38 @@ const EVENTS = new Set([
   'playbackState',
   'position',
   'queue',
-  'tokens',
+  'session',
   'volume',
 ])
 
-function validToken(value, minimum) {
-  return typeof value === 'string'
-    && value.length >= minimum
-    && value.length <= MAX_TOKEN_LENGTH
-    && value === value.trim()
-    && !/[\r\n]/.test(value)
+// Keep this in lockstep with security.js. Exact top-level shapes prevent a
+// compromised page from smuggling an extra credential or capability field
+// through an otherwise harmless event that Rust would merely ignore.
+const EVENT_KEYS = Object.freeze({
+  'api-response': ['body', 'requestId', 'status'],
+  authorization: ['authorized'],
+  'authorization-reflected': ['authorized'],
+  'cmd-done': ['cmd', 'queueLen', 'state'],
+  'cmd-recv': ['cmd'],
+  error: ['code', 'detail'],
+  'hook-boot': ['readyState'],
+  'hook-failed': ['detail'],
+  'hook-ready': ['authorized', 'trigger', 'version'],
+  'hook-warning': ['detail'],
+  'library-write': ['detail', 'id', 'kind', 'ok'],
+  modes: ['repeat', 'shuffle'],
+  nowPlaying: ['item', 'queue'],
+  playbackState: ['state'],
+  position: ['durationMs', 'positionMs'],
+  queue: ['items', 'position', 'reason'],
+  session: ['authorized', 'hasUserToken', 'storefront'],
+  volume: ['volume'],
+})
+
+function hasExactKeys(value, expected) {
+  const actual = Object.keys(value).sort()
+  return actual.length === expected.length
+    && actual.every((key, index) => key === expected[index])
 }
 
 function isPlainObject(value) {
@@ -75,18 +98,30 @@ function isBoundedJson(
 function allowed(event, payload) {
   if (!EVENTS.has(event)
     || !isPlainObject(payload)
-    || !isBoundedJson(payload, event === 'tokens' ? MAX_TOKEN_LENGTH : MAX_EVENT_STRING)) {
+    || !hasExactKeys(payload, EVENT_KEYS[event])
+    || !isBoundedJson(
+      payload,
+      event === 'api-response' ? MAX_API_BODY_BYTES : MAX_EVENT_STRING,
+    )) {
     return false
   }
-  if (event === 'tokens') {
-    if (!validToken(payload.developerToken, 32)) return false
-    if (payload.musicUserToken !== null
-      && payload.musicUserToken !== undefined
-      && !validToken(payload.musicUserToken, 32)) return false
+  if (event === 'api-response') {
+    const keys = Object.keys(payload)
+    if (!keys.every((key) => ['requestId', 'status', 'body'].includes(key))
+      || !Number.isSafeInteger(payload.requestId) || payload.requestId <= 0
+      || !Number.isInteger(payload.status) || payload.status < 100 || payload.status > 599
+      || typeof payload.body !== 'string') return false
+  }
+  if (event === 'session') {
+    const keys = Object.keys(payload)
+    if (!keys.every((key) => ['storefront', 'authorized', 'hasUserToken'].includes(key))) {
+      return false
+    }
     if (typeof payload.storefront !== 'string' || !/^[a-z]{2}$/.test(payload.storefront)) {
       return false
     }
-    if (typeof payload.authorized !== 'boolean') return false
+    if (typeof payload.authorized !== 'boolean'
+      || typeof payload.hasUserToken !== 'boolean') return false
   }
   if (event === 'authorization-reflected'
     && typeof payload.authorized !== 'boolean') return false

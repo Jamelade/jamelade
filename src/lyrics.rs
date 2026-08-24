@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Miguel Rincon
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Lyrics from Apple Music and the separately consented LRCLIB fallback.
+//! Lyrics from Apple Music and separately consented third-party providers.
 //!
 //! Apple is asked first through the already-authenticated Apple client: that
 //! discloses no playback fact to a company that did not already receive it.
@@ -23,6 +23,7 @@ use apple_ttml::parse_ttml_timestamp;
 
 const LRCLIB_ENDPOINT: &str = "https://lrclib.net/api/get";
 const LRCLIB_SEARCH_ENDPOINT: &str = "https://lrclib.net/api/search";
+const LYRICS_OVH_ENDPOINT: &str = "https://api.lyrics.ovh/v1";
 const BODY_MAX: usize = 256 * 1024;
 const LINE_MAX: usize = 600;
 const LINES_MAX: usize = 2_000;
@@ -80,6 +81,7 @@ pub struct Line {
 pub enum Provider {
     AppleMusic,
     Lrclib,
+    LyricsOvh,
 }
 
 impl Provider {
@@ -87,6 +89,7 @@ impl Provider {
         match self {
             Self::AppleMusic => "Apple Music",
             Self::Lrclib => "LRCLIB",
+            Self::LyricsOvh => "Lyrics.ovh",
         }
     }
 }
@@ -95,11 +98,12 @@ impl Provider {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Providers {
     pub lrclib: bool,
+    pub lyrics_ovh: bool,
 }
 
 impl Providers {
     pub const fn any(self) -> bool {
-        self.lrclib
+        self.lrclib || self.lyrics_ovh
     }
 }
 
@@ -128,12 +132,18 @@ struct WireLyrics {
     synced_lyrics: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct LyricsOvhWire {
+    #[serde(default)]
+    lyrics: String,
+}
+
 /// Ask available providers for one track, in privacy-preserving priority order.
 ///
 /// Apple Music goes first and reuses the existing authenticated client. LRCLIB
-/// follows only when separately enabled and Apple had no usable answer. A
-/// successful empty response beats a transport error, so "not found" does not
-/// become an alarming failure page.
+/// and Lyrics.ovh follow only when separately enabled and Apple had no usable
+/// answer. A successful empty response beats a transport error from another
+/// provider, so "not found" does not become an alarming failure page.
 pub async fn fetch(
     query: &Query,
     providers: Providers,
@@ -175,6 +185,18 @@ pub async fn fetch(
             Ok(lyrics) => {
                 had_response = true;
                 if lyrics.instrumental || !lyrics.lines.is_empty() {
+                    return Ok(lyrics);
+                }
+            }
+            Err(err) => last_error = Some(err),
+        }
+    }
+
+    if providers.lyrics_ovh {
+        match fetch_lyrics_ovh(&client, query).await {
+            Ok(lyrics) => {
+                had_response = true;
+                if !lyrics.lines.is_empty() {
                     return Ok(lyrics);
                 }
             }
@@ -230,6 +252,24 @@ async fn fetch_lrclib(client: &Client, query: &Query) -> Result<Lyrics> {
     }
 
     Ok(exact.as_ref().map(lyrics_from_wire).unwrap_or_default())
+}
+
+/// Ask Lyrics.ovh for a plain lyric. Its endpoint needs only artist and title;
+/// album and duration are deliberately not appended to the path.
+async fn fetch_lyrics_ovh(client: &Client, query: &Query) -> Result<Lyrics> {
+    let url = format!(
+        "{LYRICS_OVH_ENDPOINT}/{}/{}",
+        urlencode(&query.artist),
+        urlencode(&query.title),
+    );
+    let wire = get_json::<LyricsOvhWire>(
+        client,
+        url,
+        Provider::LyricsOvh,
+        "decoding Lyrics.ovh response",
+    )
+    .await?;
+    Ok(lyrics_from_ovh_wire(wire.as_ref()))
 }
 
 async fn search_synced(client: &Client, query: &Query) -> Result<Option<WireLyrics>> {
@@ -369,6 +409,17 @@ fn lyrics_from_wire(wire: &WireLyrics) -> Lyrics {
         synced: false,
         instrumental: false,
         source: Some(Provider::Lrclib),
+    }
+}
+
+fn lyrics_from_ovh_wire(wire: Option<&LyricsOvhWire>) -> Lyrics {
+    Lyrics {
+        lines: wire
+            .map(|wire| parse_plain(&wire.lyrics))
+            .unwrap_or_default(),
+        synced: false,
+        instrumental: false,
+        source: Some(Provider::LyricsOvh),
     }
 }
 

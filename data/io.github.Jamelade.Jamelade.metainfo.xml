@@ -15,18 +15,14 @@
     <ul>
       <li>songs, albums, artists, playlists and catalogue search</li>
       <li>personal recommendations, radio stations, listening history and storefront charts</li>
-      <li>rich native artist pages with releases, top songs, albums and biographies</li>
-      <li>Apple lyrics with a separately opt-in LRCLIB fallback</li>
-      <li>public Apple Music links and a process-local A–B section loop</li>
+      <li>optional lyrics with separate privacy opt-ins for each third-party source</li>
       <li>three local Jamkin companions with matching accessible colour themes and optional playback animation</li>
       <li>a resizable movable Desktop Jamkin with uncluttered synchronized lyrics on hover</li>
-      <li>continuous album-art glass with adaptive foreground contrast</li>
-      <li>selectable Jamkin launcher tiles through the desktop portal or an optional narrow local helper</li>
+      <li>selectable Jamkin launcher tiles confirmed and installed by the desktop portal</li>
       <li>MPRIS controls for Plasma, GNOME and other Linux desktops</li>
     </ul>
     <p>An active Apple Music subscription and an internet connection are required.</p>
-    <p>Jamelade is an unofficial community fork of Slipmat. It is not affiliated with, endorsed by, or approved by Apple Inc., and Apple can change or block the web service it relies on.</p>
-    <p>Apple and Apple Music are trademarks of Apple Inc., registered in the U.S. and other countries.</p>
+    <p>Jamelade is an unofficial community fork of Slipmat and is not affiliated with Apple Inc.</p>
   </description>
 
   <launchable type="desktop-id">io.github.Jamelade.Jamelade.Launcher.desktop</launchable>
@@ -48,9 +44,9 @@
     <internet>always</internet>
   </requires>
   <releases>
-    <release version="0.10.0-beta.1" date="2026-08-23">
+    <release version="1.0.0" date="2026-08-24">
       <description>
-        <p>First public beta with Apple Music Home, synchronized lyrics, album-aware glass, optional Discord activity, and selectable animated Jamkin companions.</p>
+        <p>First complete Jamelade release with native Apple Music Home, synchronized lyrics, responsive album-aware glass, artist pages, and selectable Jamkin companions.</p>
       </description>
     </release>
   </releases>

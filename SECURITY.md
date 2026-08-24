@@ -23,8 +23,10 @@ Security tab. Include:
 - any suggested mitigation.
 
 Do not send real Apple credentials, cookies, tokens, keyring exports, or private
-library data. Reports and disclosure coordination stay inside GitHub's private
-advisory.
+library data. A maintainer will acknowledge a usable report through GitHub's
+private advisory and coordinate disclosure there. Responses are best effort;
+the current target is an initial acknowledgement within seven days, not a
+guaranteed service-level agreement.
 
 ## Scope and support
 
@@ -41,7 +43,13 @@ dependency issues. Ordinary Apple service outages, missing lyrics, DRM support
 on unsupported architectures, or a user deliberately enabling documented
 Discord or lyrics sharing are not vulnerabilities by themselves.
 
-Jamelade cannot guarantee the availability or behavior of Apple Music,
-MusicKit, Widevine, lyrics providers, Discord, or other third-party services.
-Reports should concern weaknesses Jamelade can reasonably control. The main
-trust boundaries are described in [ARCHITECTURE.md](ARCHITECTURE.md).
+Jamelade is an unofficial client and cannot guarantee the availability or
+behavior of Apple Music, MusicKit, Widevine, lyrics providers, Discord, or
+other third-party services. Reports should concern weaknesses Jamelade can
+reasonably control.
+
+The documented trust boundaries, permissions, destinations, storage, and known
+limitations are in
+[docs/SECURITY_AND_PRIVACY.md](docs/SECURITY_AND_PRIVACY.md). That document and
+automated tests are maintainer evidence, not an independent audit or a promise
+that the software is vulnerability-free.

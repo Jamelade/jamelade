@@ -10,8 +10,17 @@ const {
   isAllowedRendererEvent,
   isTrustedAppleUrl,
   mayPersistCookies,
+  runtimeIdentity,
   safeErrorDetail,
 } = require('./security')
+
+test('runtime identity accepts only the fixed broker-test profile', () => {
+  assert.equal(runtimeIdentity('broker-test').appName, 'Jamelade Broker Test')
+  assert.equal(runtimeIdentity('broker-test').partition, 'jamelade-broker-test-memory')
+  assert.equal(runtimeIdentity('BROKER-TEST').appName, 'Jamelade')
+  assert.equal(runtimeIdentity('../broker-test').profileName, 'Jamelade')
+  assert.ok(Object.isFrozen(runtimeIdentity('broker-test')))
+})
 
 test('Apple navigation requires HTTPS and a real domain boundary', () => {
   assert.equal(isTrustedAppleUrl('https://music.apple.com/us/browse'), true)
@@ -38,28 +47,60 @@ test('the credential-bearing session can contact only Apple service domains', ()
   assert.equal(isAllowedNetworkUrl('file:///etc/passwd'), false)
 })
 
-test('token events are bounded and structurally checked', () => {
+test('session events are credential-free and structurally checked', () => {
   const event = {
-    event: 'tokens',
-    developerToken: `eyJ${'a'.repeat(40)}`,
-    musicUserToken: 'm'.repeat(64),
+    event: 'session',
     storefront: 'us',
     authorized: true,
+    hasUserToken: true,
   }
   assert.equal(isAllowedRendererEvent(event), true)
   assert.equal(isAllowedRendererEvent({ ...event, storefront: '../' }), false)
-  assert.equal(isAllowedRendererEvent({ ...event, musicUserToken: 'bad\nvalue' }), false)
+  assert.equal(isAllowedRendererEvent({ ...event, hasUserToken: 'yes' }), false)
+  assert.equal(isAllowedRendererEvent({ ...event, developerToken: 'must-not-cross' }), false)
   assert.equal(isAllowedRendererEvent({ event: 'not-allowed' }), false)
   assert.equal(isAllowedRendererEvent({ event: 'error', detail: 'x'.repeat(4097) }), false)
   assert.equal(isAllowedRendererEvent({ event: 'position', position: Number.NaN }), false)
   assert.equal(isAllowedRendererEvent({ event: 'cmd-recv', cmd: '../bad' }), false)
   assert.equal(isAllowedRendererEvent({
+    event: 'hook-ready',
+    authorized: true,
+    trigger: 'main-probe',
+    version: 'test',
+    musicUserToken: 'must-not-cross',
+  }), false)
+  assert.equal(isAllowedRendererEvent({
+    event: 'hook-boot',
+    readyState: 'complete',
+    href: 'https://music.apple.com/us/album/private/123',
+  }), false)
+  assert.equal(isAllowedRendererEvent({
     event: 'authorization-reflected',
     authorized: true,
   }), true)
   assert.equal(isAllowedRendererEvent({ event: 'authorization-reflected' }), false)
-  assert.equal(isAllowedRendererEvent({ event: 'queue', items: Array(4096).fill(null) }), true)
-  assert.equal(isAllowedRendererEvent({ event: 'queue', items: Array(4097).fill(null) }), false)
+  const queue = { event: 'queue', reason: 'items', position: 0, items: [] }
+  assert.equal(isAllowedRendererEvent(queue), true)
+  assert.equal(isAllowedRendererEvent({ ...queue, token: 'must-not-cross' }), false)
+  assert.equal(isAllowedRendererEvent({ ...queue, items: Array(4096).fill(null) }), true)
+  assert.equal(isAllowedRendererEvent({ ...queue, items: Array(4097).fill(null) }), false)
+})
+
+test('browser broker responses are bounded and have no extra capability fields', () => {
+  const response = {
+    event: 'api-response',
+    requestId: 9,
+    status: 200,
+    body: '{"data":[]}',
+  }
+  assert.equal(isAllowedRendererEvent(response), true)
+  assert.equal(isAllowedRendererEvent({ ...response, requestId: 0 }), false)
+  assert.equal(isAllowedRendererEvent({ ...response, status: 999 }), false)
+  assert.equal(isAllowedRendererEvent({ ...response, url: 'https://example.com' }), false)
+  assert.equal(isAllowedRendererEvent({
+    ...response,
+    body: 'x'.repeat(3 * 1024 * 1024 + 1),
+  }), false)
 })
 
 test('error details redact credential-shaped values', () => {

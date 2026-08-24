@@ -3,8 +3,8 @@
 
 //! Persistent **preferences**, in `~/.config/jamelade/settings.ini`.
 //!
-//! Preferences only. Apple cookies live in an encrypted keyring-backed vault
-//! and tokens are harvested into memory — nothing secret goes in this file. If you
+//! Preferences only. Apple cookies use an encrypted vault and credentials stay
+//! inside the browser sidecar — nothing secret goes in this file. If you
 //! find yourself adding a field whose value would be embarrassing in a
 //! plain-text file under `~/.config`, it belongs somewhere else.
 //!
@@ -17,7 +17,9 @@ use relm4::gtk::glib::{self, KeyFile, KeyFileFlags};
 use crate::companion::Companion;
 
 mod jamkin_quality;
+mod theme;
 pub use jamkin_quality::JamkinQuality;
+pub use theme::Theme;
 
 const GROUP: &str = "Jamelade";
 
@@ -40,49 +42,6 @@ pub const MIN_LYRICS_FONT_SCALE: u8 = 80;
 pub const MAX_LYRICS_FONT_SCALE: u8 = 160;
 pub const DEFAULT_DESKTOP_JAMKIN_MARGIN: i32 = 24;
 pub const MAX_DESKTOP_JAMKIN_MARGIN: i32 = 32_768;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Theme {
-    #[default]
-    System,
-    Light,
-    Dark,
-}
-
-impl Theme {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::System => "system",
-            Self::Light => "light",
-            Self::Dark => "dark",
-        }
-    }
-
-    fn parse(s: &str) -> Self {
-        match s {
-            "light" => Self::Light,
-            "dark" => Self::Dark,
-            _ => Self::System,
-        }
-    }
-
-    /// Index in the Preferences combo row, and back.
-    pub fn from_index(i: u32) -> Self {
-        match i {
-            1 => Self::Light,
-            2 => Self::Dark,
-            _ => Self::System,
-        }
-    }
-
-    pub fn index(self) -> u32 {
-        match self {
-            Self::System => 0,
-            Self::Light => 1,
-            Self::Dark => 2,
-        }
-    }
-}
 
 /// Which sidebar section the app opens on. Persisted, so it reopens where you
 /// left it rather than always on the same one.
@@ -205,6 +164,10 @@ pub struct Settings {
     /// disclosure and requires an explicit opt in even though it never contains
     /// Apple credentials.
     pub lyrics_enabled: bool,
+    /// Permit the current artist and title to be sent to Lyrics.ovh as the
+    /// final plain-text fallback. Separate from LRCLIB consent: enabling one
+    /// third party must never silently opt the user into another.
+    pub lyrics_ovh_enabled: bool,
     /// Playlists pinned to the sidebar, in the order they were put there.
     ///
     /// **Library ids only** (`p.…`, as `/me/library/playlists` returns them).
@@ -310,6 +273,7 @@ impl Default for Settings {
             notify_track_change: false,
             discord_activity: false,
             lyrics_enabled: false,
+            lyrics_ovh_enabled: false,
             // Nothing pinned until somebody pins something. An app that
             // guesses which playlists matter to you gets it wrong.
             pinned_playlists: Vec::new(),
@@ -363,6 +327,9 @@ impl Settings {
         }
         if let Ok(enabled) = file.boolean(GROUP, "lyrics-enabled") {
             settings.lyrics_enabled = enabled;
+        }
+        if let Ok(enabled) = file.boolean(GROUP, "lyrics-ovh-enabled") {
+            settings.lyrics_ovh_enabled = enabled;
         }
         if let Ok(section) = file.string(GROUP, "section") {
             settings.section = Section::parse(&section);
@@ -478,6 +445,7 @@ impl Settings {
         file.set_boolean(GROUP, "notify-track-change", self.notify_track_change);
         file.set_boolean(GROUP, "discord-activity", self.discord_activity);
         file.set_boolean(GROUP, "lyrics-enabled", self.lyrics_enabled);
+        file.set_boolean(GROUP, "lyrics-ovh-enabled", self.lyrics_ovh_enabled);
         file.set_string(GROUP, "section", self.section.as_str());
         file.set_boolean(GROUP, "show-sidebar", self.show_sidebar);
         file.set_boolean(GROUP, "player-backdrop", self.player_backdrop);
@@ -550,10 +518,10 @@ impl Settings {
     /// so there is no flash of the wrong theme, and again whenever it changes.
     pub fn apply_theme(&self) {
         let manager = relm4::adw::StyleManager::default();
-        manager.set_color_scheme(match self.theme {
-            Theme::System => relm4::adw::ColorScheme::Default,
-            Theme::Light => relm4::adw::ColorScheme::ForceLight,
-            Theme::Dark => relm4::adw::ColorScheme::ForceDark,
+        manager.set_color_scheme(match self.theme.prefers_dark() {
+            None => relm4::adw::ColorScheme::Default,
+            Some(false) => relm4::adw::ColorScheme::ForceLight,
+            Some(true) => relm4::adw::ColorScheme::ForceDark,
         });
     }
 }
@@ -561,32 +529,6 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn theme_round_trips_through_its_string_form() {
-        for theme in [Theme::System, Theme::Light, Theme::Dark] {
-            assert_eq!(Theme::parse(theme.as_str()), theme);
-        }
-    }
-
-    #[test]
-    fn an_unknown_theme_falls_back_to_system() {
-        // A hand-edited or future-version ini must not break startup.
-        assert_eq!(Theme::parse("solarized"), Theme::System);
-        assert_eq!(Theme::parse(""), Theme::System);
-    }
-
-    #[test]
-    fn theme_round_trips_through_its_combo_index() {
-        for theme in [Theme::System, Theme::Light, Theme::Dark] {
-            assert_eq!(Theme::from_index(theme.index()), theme);
-        }
-    }
-
-    #[test]
-    fn an_out_of_range_index_falls_back_to_system() {
-        assert_eq!(Theme::from_index(99), Theme::System);
-    }
 
     #[test]
     fn section_round_trips_and_falls_back() {
@@ -646,6 +588,7 @@ mod tests {
     #[test]
     fn third_party_lyrics_start_disabled() {
         assert!(!Settings::default().lyrics_enabled);
+        assert!(!Settings::default().lyrics_ovh_enabled);
     }
 
     #[test]
@@ -726,7 +669,8 @@ mod tests {
              lyrics-font-scale=90\n\
              notify-track-change=true\n\
              discord-activity=true\n\
-             lyrics-enabled=true\n",
+             lyrics-enabled=true\n\
+             lyrics-ovh-enabled=true\n",
         );
 
         assert_eq!(stored.theme, Theme::Dark);
@@ -747,6 +691,7 @@ mod tests {
         assert!(stored.notify_track_change);
         assert!(stored.discord_activity);
         assert!(stored.lyrics_enabled);
+        assert!(stored.lyrics_ovh_enabled);
     }
 
     #[test]

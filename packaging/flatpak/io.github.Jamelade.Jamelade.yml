@@ -47,8 +47,9 @@ finish-args:
   # The visible desktop entry is a stable sub-launcher so the Dynamic Launcher
   # portal can replace its Jamkin tile after an explicit confirmation.
   - --own-name=io.github.Jamelade.Jamelade.Launcher
-  # The separately installed per-user icon helper accepts only JamBun, JamPam,
-  # or JamJoe and can update only Jamelade's fixed launcher entry.
+  # Optional, separately installed same-user helper. It accepts only the three
+  # Jamkin names and rewrites only Jamelade's stable launcher. Without it the
+  # Dynamic Launcher portal remains the fallback.
   - --talk-name=io.github.Jamelade.IconHelper
   # Optional Discord Rich Presence uses only Discord's local IPC socket. These
   # are the standard narrow grants for native Discord/Vesktop, Flathub Discord,
@@ -76,9 +77,8 @@ modules:
   - name: gtk4-layer-shell
     buildsystem: meson
     config-opts:
-      # Some host distributions default Meson to lib64 even inside the
-      # Flatpak SDK. Keep the dependency in Flatpak's portable /app/lib path,
-      # which pkg-config and the runtime loader both search.
+      # Flatpak's portable library directory. Some host distributions default
+      # Meson to lib64 even inside the SDK.
       - --libdir=lib
       - -Dexamples=false
       - -Ddocs=false
@@ -101,7 +101,7 @@ modules:
         # keeps checkout time and flatpak-builder's temporary directory out of
         # otherwise identical release binaries. Update deliberately for the
         # next release rather than inheriting the builder's wall clock.
-        SOURCE_DATE_EPOCH: '1787443200'
+        SOURCE_DATE_EPOCH: '1787529600'
         CARGO_INCREMENTAL: '0'
         RUSTFLAGS: '--remap-path-prefix=/run/build/jamelade=/usr/src/jamelade'
         # Public Rich Presence identifier only. Discord client secrets and
@@ -118,6 +118,15 @@ modules:
           - icon-helper/target
           - sidecar/node_modules
           - .git
+          - .audit-cargo-home
+          - .audit-target
+          - .audit-tools
+          - .broker-test-build
+          - .broker-test-repo
+          - .stable-promotion-build
+          - .stable-promotion-repo
+          - .stable-verify-build
+          - .stable-verify-repo
           - packaging/flatpak/.flatpak-builder
           - build-dir
           - flatpak-repo
@@ -136,12 +145,17 @@ modules:
       # `node_modules/electron/dist/electron` directly, and the other thirteen
       # packages exist only to download that binary.
       - type: archive
-        url: https://github.com/castlabs/electron-releases/releases/download/v43.2.0%2Bwvcus/electron-v43.2.0+wvcus-linux-x64.zip
+        url: https://github.com/castlabs/electron-releases/releases/download/v43.2.0%2Bwvcus/electron-v43.2.0%2Bwvcus-linux-x64.zip
         sha256: d69d7cb6d27651f51c106fec52c746097d064f95b2fee6966f9888e44e0cbf54
         strip-components: 0
         dest: electron-dist
     build-commands:
       - cargo --offline fetch --manifest-path Cargo.toml --verbose
+      - cargo fmt --all -- --check
+      - cargo --offline clippy --all-targets --no-default-features -- -D warnings
+      - cargo --offline clippy --all-targets --features broker-test -- -D warnings
+      - cargo --offline test --no-default-features --no-run
+      - cargo --offline test --features broker-test --no-run
       - cargo --offline build --release --verbose
       - install -Dm755 target/release/jamelade /app/bin/jamelade.real
       - bash scripts/install-cargo-licenses.sh cargo/vendor

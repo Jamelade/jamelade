@@ -111,7 +111,7 @@ impl AppModel {
                 // Recording the group rather than the pin is deliberate. Pushed
                 // pages are not restored anywhere in this app — close on an
                 // album and you reopen on Albums — and restoring one here would
-                // need the page opened before tokens exist, plus something to
+                // need the page opened before the browser session exists, plus something to
                 // say what to do when the playlist was deleted on another
                 // device. All is the honest answer, and it is the same answer
                 // albums already give.

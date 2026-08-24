@@ -37,7 +37,7 @@ use crate::components::{
 use crate::mpris::Mpris;
 use crate::music::types::{Album, Artist, ArtistPageData, Artwork, Explore, Playlist, Track};
 use crate::notify;
-use crate::player::protocol::{Command, RepeatMode, Tokens};
+use crate::player::protocol::{AppleSession, Command, RepeatMode};
 use crate::player::{Incoming, PlayerState, sidecar};
 use crate::segment_loop::SegmentLoop;
 use crate::settings::{Section, Settings, Theme};
@@ -130,7 +130,7 @@ pub struct AppModel {
     /// blocked, which is what stops it being presented twice.
     onboarding: Option<adw::Dialog>,
 
-    /// Whether the restore has been attempted this session, so a later token
+    /// Whether the restore has been attempted this session, so a later browser
     /// refresh cannot start it again.
     restored: bool,
 
@@ -157,12 +157,12 @@ pub struct AppModel {
     /// depending purely on which event won the race.
     progress_mark: std::cell::Cell<(u64, u64)>,
 
-    /// Live for the process lifetime, never persisted (rule 7).
-    tokens: Option<Tokens>,
-    /// Identity for work started with the current account's credentials.
+    /// Credential-free projection of the browser-owned Apple session.
+    apple_session: Option<AppleSession>,
+    /// Identity for work started with the current Apple session.
     ///
     /// A response can outlive sign-out because each API task owns a clone of
-    /// the tokens it started with.  Tagging every account-bound result lets us
+    /// the broker session it started with. Tagging every account-bound result lets us
     /// reject that response before it can repaint the UI or recreate the
     /// library cache for the account that was just forgotten.
     account_generation: u64,
@@ -604,12 +604,19 @@ pub enum AppMsg {
     ShowLyrics,
     /// Copy the current catalog song's public Apple Music URL.
     CopyPlayingLink,
+    /// Star or un-star the current song using the same Apple write path as a
+    /// song row's options menu.
+    TogglePlayingFavorite,
     /// Resolve the current catalog song's album and open its Jamelade page.
     OpenPlayingAlbum,
     /// Resolve the current catalog song's artist and open its Jamelade page.
     OpenPlayingArtist,
     /// Copy the public link stored on a loaded album or playlist page.
     CopyPageLink {
+        page: u64,
+    },
+    /// Resolve an album page's artist from its first catalog song and open it.
+    OpenAlbumArtist {
         page: u64,
     },
     /// A grid tile was activated. The position is resolved against the grid
@@ -717,6 +724,8 @@ pub enum AppMsg {
     SetNotifyTrackChange(bool),
     /// LRCLIB metadata disclosure; off until explicitly enabled.
     SetLyricsEnabled(bool),
+    /// A separate opt-in for the token-free Lyrics.ovh fallback.
+    SetLyricsOvhEnabled(bool),
     ToggleQueue,
     /// A library row was activated; the position is resolved immediately.
     LibraryActivated(u32),
@@ -793,6 +802,9 @@ pub enum CommandMsg {
         /// Carried here rather than in its own message because the cover and
         /// what is drawn from it must be applied together.
         backdrop: Option<PathBuf>,
+        /// A separately softened copy for the bottom player. It stays blurred
+        /// at the clear-art endpoint where `backdrop` becomes the full cover.
+        bar_backdrop: Option<PathBuf>,
         /// The slider value used to render `backdrop`. If it changed while the
         /// cover downloaded, the current variant is queued immediately after.
         glass_strength: u8,
@@ -807,6 +819,7 @@ pub enum CommandMsg {
         source: PathBuf,
         glass_strength: u8,
         backdrop: Option<PathBuf>,
+        bar_backdrop: Option<PathBuf>,
     },
     /// An album page's contents. Tagged with the page id: by the time this
     /// lands the user may have gone back, and filling a page that is no longer
@@ -908,6 +921,7 @@ fn map_player_output(out: NowPlayingOutput) -> AppMsg {
         NowPlayingOutput::OpenAlbum => AppMsg::OpenPlayingAlbum,
         NowPlayingOutput::OpenArtist => AppMsg::OpenPlayingArtist,
         NowPlayingOutput::CopyLink => AppMsg::CopyPlayingLink,
+        NowPlayingOutput::ToggleFavorite => AppMsg::TogglePlayingFavorite,
     }
 }
 
@@ -1093,7 +1107,7 @@ impl Component for AppModel {
                                                     );
                                                 },
 
-                                                // The five rows are appended by
+                                                // The fixed rows are appended by
                                                 // `wiring::sidebar_rows`, from the
                                                 // one array that also defines the
                                                 // index contract read just above.
@@ -1209,8 +1223,8 @@ impl Component for AppModel {
                                                 // on a wide one.
                                                 set_hexpand: true,
                                                 set_max_width_chars: 60,
-                                                // Typing here before the tokens
-                                                // arrive queries a catalog that
+                                                // Typing here before the browser
+                                                // session arrives queries a catalog that
                                                 // cannot answer.
                                                 #[watch]
                                                 set_sensitive: model.controls_live(),
@@ -1587,6 +1601,7 @@ impl Component for AppModel {
                 NowPlayingOutput::OpenAlbum => AppMsg::OpenPlayingAlbum,
                 NowPlayingOutput::OpenArtist => AppMsg::OpenPlayingArtist,
                 NowPlayingOutput::CopyLink => AppMsg::CopyPlayingLink,
+                NowPlayingOutput::ToggleFavorite => AppMsg::TogglePlayingFavorite,
             });
 
         let library: TypedListView<LibraryItem, gtk::NoSelection> = TypedListView::new();
@@ -1819,7 +1834,7 @@ impl Component for AppModel {
             menu_sender: sender.clone(),
             last_command: std::cell::RefCell::new(None),
             progress_mark: std::cell::Cell::new((0, 0)),
-            tokens: None,
+            apple_session: None,
             account_generation: 0,
             sidecar: None,
             restarts: 0,
@@ -1895,8 +1910,8 @@ impl Component for AppModel {
 
         wiring::connect(&mut model, &widgets, &root, &sender);
 
-        // The drawer opens to most of the window, rather than to whatever
-        // height its contents happen to add up to. See `fill_window`.
+        // Wide uses a compact one-third-height drawer; narrow windows keep a
+        // taller vertical composition. See `fill_window`.
         crate::components::player_view::fill_window(
             &root,
             &widgets.player_sheet,
@@ -2159,13 +2174,27 @@ impl AppModel {
             }
             AppMsg::HideVolumeOsd => self.hide_volume_osd(),
             AppMsg::CopyPlayingLink => {
-                let link = self.tokens.as_ref().and_then(|tokens| {
+                let link = self.apple_session.as_ref().and_then(|session| {
                     self.playing_catalog_id()
-                        .and_then(|id| crate::apple_link::song(&tokens.storefront, &id))
+                        .and_then(|id| crate::apple_link::song(&session.storefront, &id))
                 });
                 match link {
                     Some(link) => self.copy_apple_link(&link),
                     None => self.toast("No public Apple Music link is available"),
+                }
+            }
+            AppMsg::TogglePlayingFavorite => {
+                let Some(catalog_id) = self.playing_catalog_id() else {
+                    self.toast("No catalog song is available");
+                    return;
+                };
+                if self.playing_favorite(&catalog_id) {
+                    sender.input(AppMsg::Unfavorite { catalog_id });
+                } else {
+                    sender.input(AppMsg::LibraryWrite {
+                        catalog_id,
+                        action: LibraryAction::Favorite,
+                    });
                 }
             }
             AppMsg::OpenPlayingAlbum => match self.playing_catalog_id() {
@@ -2371,7 +2400,10 @@ impl AppModel {
                 self.player_view.emit(PlayerViewInput::SetQueueShown(false));
                 self.sync_page_controls();
                 self.push_snapshot();
-                self.selected_row = Some(SidebarRow::Section(View::Lyrics));
+                // Lyrics belongs to the player controls rather than the
+                // navigation sidebar, so no sidebar row should stay selected
+                // while its dedicated view is open.
+                self.selected_row = None;
                 self.pins_dirty = true;
                 self.handle(AppMsg::SetView(View::Lyrics), &sender, root);
             }
@@ -2445,6 +2477,7 @@ impl AppModel {
             AppMsg::SetTheme(index) => {
                 self.settings.theme = Theme::from_index(index);
                 self.settings.apply_theme();
+                crate::style::set_theme(self.settings.theme);
                 self.settings.save();
             }
             AppMsg::SetNotifyTrackChange(on) => {
@@ -2456,6 +2489,14 @@ impl AppModel {
                     return;
                 }
                 self.settings.lyrics_enabled = on;
+                self.settings.save();
+                self.lyrics_provider_changed(&sender);
+            }
+            AppMsg::SetLyricsOvhEnabled(on) => {
+                if self.settings.lyrics_ovh_enabled == on {
+                    return;
+                }
+                self.settings.lyrics_ovh_enabled = on;
                 self.settings.save();
                 self.lyrics_provider_changed(&sender);
             }
@@ -2593,6 +2634,22 @@ impl AppModel {
                 }
             }
             AppMsg::OpenPage(kind) => self.push_page(kind, &sender),
+            AppMsg::OpenAlbumArtist { page } => {
+                let catalog_id = self
+                    .pages
+                    .iter()
+                    .find(|candidate| candidate.id == page)
+                    .and_then(|page| page.entries.iter().find_map(Entry::catalog_id))
+                    .map(str::to_owned);
+                if let Some(catalog_id) = catalog_id {
+                    sender.input(AppMsg::OpenQueueTrackPage {
+                        catalog_id,
+                        album: false,
+                    });
+                } else {
+                    self.toast("Artist page unavailable");
+                }
+            }
             AppMsg::OpenQueueTrackPage { catalog_id, album } => {
                 let Some(client) = self.client() else {
                     self.toast("Not connected yet");
@@ -2717,7 +2774,7 @@ impl AppModel {
                 self.art_for = None;
                 self.art_path = None;
                 crate::session::clear();
-                crate::style::set_track_visuals(None, None);
+                crate::style::set_track_visuals(None, None, None);
             }
             AppMsg::JumpTo { at, id } => match self.queue_index_at(at, &id) {
                 Some(index) => {
@@ -2906,8 +2963,8 @@ impl AppModel {
             AppMsg::SetPlayerBackdrop(on) => {
                 self.settings.player_backdrop = on;
                 self.settings.save();
-                // Live, like the accent. `style` still knows which cover is
-                // showing, so turning it back on needs no track change first.
+                // Live, like the accent. `style` retains the current cover and
+                // palette, so turning album glass back on needs no track change.
                 crate::style::set_backdrop_enabled(on);
             }
             AppMsg::SetGlassStrength(strength) => {
@@ -3589,6 +3646,7 @@ impl AppModel {
                 template,
                 path,
                 backdrop,
+                bar_backdrop,
                 glass_strength,
                 palette,
             } => {
@@ -3601,6 +3659,9 @@ impl AppModel {
                     if let Some(backdrop) = backdrop {
                         let _ = std::fs::remove_file(backdrop);
                     }
+                    if let Some(bar_backdrop) = bar_backdrop {
+                        let _ = std::fs::remove_file(bar_backdrop);
+                    }
                     tracing::debug!("discarding artwork for a track that has moved on");
                     return;
                 }
@@ -3611,7 +3672,11 @@ impl AppModel {
                 self.art_path = path.clone();
                 // Put the cover behind the whole window. Scaled off the GTK thread
                 // alongside the fetch, so this is only the CSS swap.
-                crate::style::set_track_visuals(backdrop.as_deref(), palette);
+                crate::style::set_track_visuals(
+                    backdrop.as_deref(),
+                    bar_backdrop.as_deref(),
+                    palette,
+                );
                 if artwork::backdrop_blur_radius(glass_strength)
                     != artwork::backdrop_blur_radius(self.settings.glass_strength)
                 {
@@ -3642,6 +3707,7 @@ impl AppModel {
                 source,
                 glass_strength,
                 backdrop,
+                bar_backdrop,
             } => {
                 if generation != self.account_generation
                     || self.art_path.as_ref() != Some(&source)
@@ -3651,11 +3717,14 @@ impl AppModel {
                     if let Some(backdrop) = backdrop {
                         let _ = std::fs::remove_file(backdrop);
                     }
+                    if let Some(bar_backdrop) = bar_backdrop {
+                        let _ = std::fs::remove_file(bar_backdrop);
+                    }
                     tracing::debug!(glass_strength, "discarding a stale glass blur variant");
                     return;
                 }
                 if let Some(backdrop) = backdrop.as_deref() {
-                    crate::style::set_backdrop_art(Some(backdrop));
+                    crate::style::set_backdrop_art(Some(backdrop), bar_backdrop.as_deref());
                 }
             }
             CommandMsg::Sidecar(Incoming::Event(event)) => self.on_event(event, &sender),
@@ -3727,7 +3796,7 @@ impl AppModel {
 
     /// Drop everything that belonged to the signed-in user.
     ///
-    /// Not just the tokens: the library, the grids, the catalog results and the
+    /// Not just the browser session: the library, grids, catalog results and
     /// pushed pages all came from that account, and leaving them on screen
     /// after a sign-out would show one person's music to whoever signs in
     /// next. The unplayable-id cache stays — it is about Apple's catalog, not
@@ -3740,7 +3809,7 @@ impl AppModel {
         self.account_generation = self.account_generation.wrapping_add(1);
         self.search_gen = self.search_gen.wrapping_add(1);
         self.stage = Stage::SignedOut;
-        self.tokens = None;
+        self.apple_session = None;
         self.clear_discovery_session();
 
         self.all_tracks.clear();
@@ -3806,7 +3875,7 @@ impl AppModel {
         crate::session::clear();
         crate::library_cache::clear();
         crate::components::artwork::clear_cache();
-        crate::style::set_track_visuals(None, None);
+        crate::style::set_track_visuals(None, None, None);
         crate::notify::clear(relm4::main_application().upcast_ref::<gtk::gio::Application>());
         self.push_snapshot();
     }
@@ -3814,7 +3883,7 @@ impl AppModel {
     /// Put the first-run gate up or take it down, to match the session.
     ///
     /// Driven from one place rather than from each site that changes `stage`,
-    /// because there are four of them — tokens arriving, an authorization
+    /// because there are four of them — session state arriving, authorization
     /// change, a hook attaching, and signing out — and three of them would have
     /// been easy to forget.
     fn sync_onboarding(&mut self, sender: &ComponentSender<Self>, root: &adw::ApplicationWindow) {

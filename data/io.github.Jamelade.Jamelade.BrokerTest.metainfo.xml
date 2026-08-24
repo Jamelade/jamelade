@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.Jamelade.Jamelade.BrokerTest</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Jamelade Broker Test</name>
+  <summary>Isolated evaluation build of Jamelade's hardened browser broker</summary>
+  <description>
+    <p>
+      This parallel-installable test edition evaluates Jamelade's hardened
+      Apple Music browser broker without sharing settings, cookies, cache,
+      process identity, launcher, or desktop media controls with Jamelade.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.Jamelade.Jamelade.BrokerTest.Launcher.desktop</launchable>
+  <provides>
+    <binary>jamelade-broker-test</binary>
+  </provides>
+  <developer id="io.github.jamelade">
+    <name>Jamelade contributors</name>
+  </developer>
+  <url type="homepage">https://github.com/Jamelade/jamelade</url>
+  <content_rating type="oars-1.1"/>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>touch</control>
+  </supports>
+  <requires>
+    <internet>always</internet>
+  </requires>
+</component>

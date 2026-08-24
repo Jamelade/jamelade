@@ -42,9 +42,10 @@ biography without leaving the page.
 ### Live lyrics with privacy-first fallbacks
 
 Jamelade follows synchronized lyrics while keeping the selected Jamkin visible.
-It tries Apple Music first, then the separately opt-in LRCLIB fallback.
-Successful results stay in memory. [Lyrics sources](docs/LYRICS_SOURCES.md)
-explains what each provider receives.
+It tries Apple Music first. LRCLIB and Lyrics.ovh are independent, off-by-
+default fallbacks; Jamelade contacts only sources the user has enabled and
+stops at the first usable result. Successful results stay in memory.
+[Lyrics sources](docs/LYRICS_SOURCES.md) explains what each provider receives.
 
 ### Jamkin companions
 
@@ -121,6 +122,7 @@ session is memory-only. Optional integrations never receive Apple credentials.
 | --- | --- | --- |
 | Apple Music | Required for playback | Sign-in, library, catalogue, playback, and first-party lyric requests go to Apple; lyrics add only the playing catalog ID |
 | LRCLIB lyrics | Off | Track title, artist, album, duration, and the requester's IP address |
+| Lyrics.ovh lyrics | Off | Artist, title, and the requester's IP address; the service may query downstream lyric sites |
 | Discord activity | Off | Selected song metadata and Jamkin are handed to the local Discord client; Discord then applies its own privacy settings |
 | Desktop Jamkin | On | Nothing extra; it reuses local playback and lyric state |
 | Glass palette and playlist collages | Local | Nothing; both are generated and cached on the device |
@@ -144,31 +146,23 @@ launcher entry, and has no network access. Remove it with
 
 ## Install
 
-Jamelade's public beta is distributed as an **x86_64 Flatpak**. Download the
-bundle and `SHA256SUMS` from the
-[beta release](https://github.com/Jamelade/jamelade/releases/tag/v0.10.0-beta.1),
-then run:
-
-```bash
-sha256sum --ignore-missing -c SHA256SUMS
-flatpak install --user ./Jamelade-0.10.0-beta.1-x86_64.flatpak
-```
-
-The bundle records Flathub as the source for its GNOME runtime. Ubuntu and
-Debian users may need to install Flatpak first. Launch **Jamelade** from the
-desktop's app grid after installation.
-
-The first installation may fetch the GNOME 49 runtime. Building also downloads
-the roughly 200 MB castLabs Electron playback sidecar; the release bundle
-already contains that sidecar, while Widevine downloads on first use.
-
-To build from source instead, the project needs Rust 1.93 or newer,
-GTK 4.20 or newer, libadwaita 1.8 or newer, Node.js, npm, and the development
-packages listed by your distribution:
+The current source is Jamelade 1.0. A matching binary release has not yet been
+published, so the supported way to try this revision is to build its **x86_64
+Flatpak**. Install the Flatpak tools and runtimes listed in
+[`packaging/flatpak/README.md`](packaging/flatpak/README.md), then run:
 
 ```bash
 make flatpak-bundle
+flatpak install --user ./Jamelade.flatpak
 ```
+
+The resulting bundle records Flathub as the source for its GNOME runtime.
+Building downloads the pinned castLabs Electron playback sidecar; Widevine is
+not in the source or bundle and is downloaded by Chromium on first use.
+
+The older
+[0.10 beta bundle](https://github.com/Jamelade/jamelade/releases/tag/v0.10.0-beta.1)
+remains available for testing, but it predates the 1.0 browser-broker design.
 
 ### Requirements
 
@@ -187,22 +181,22 @@ make flatpak-bundle
 - **Apple can change the service.** Jamelade relies on Apple's MusicKit web
   playback surface and public-facing catalogue APIs, which can change without
   notice.
-- **The Apple integration is unofficial.** Jamelade loads `music.apple.com`,
-  reads the developer token used by Apple's site, and reuses it for native API
-  requests. This is not Apple's documented MusicKit integration model, which
-  expects a developer-owned media identifier and signing key. Apple's current
-  service terms also restrict access to Apple software. Treat the app as an
-  experimental compatibility client, review Apple's terms for your region, and
-  expect Apple to block it without notice.
+- **The Apple integration is unofficial.** Jamelade loads `music.apple.com`
+  and asks MusicKit's authenticated browser client to perform a narrow set of
+  Apple API requests. Rust never receives Apple cookies or MusicKit tokens.
+  This is still not Apple's documented third-party MusicKit integration model.
+  Review Apple's terms for your region and expect Apple to change or block the
+  service without notice.
 - **Some library entries may be unavailable.** Apple can leave a delisted track
   in a library even though it can no longer be streamed.
 
 ## How it works
 
-Rust and GTK own the interface, Apple API access, lyrics, and desktop
-integration. A constrained castLabs Electron sidecar handles Apple sign-in,
-MusicKit playback, Widevine, and audio. They communicate through a bounded
-line-based protocol; Jamelade does not remove DRM or download decrypted music.
+Rust and GTK own the interface, typed data, lyrics, and desktop integration. A
+constrained castLabs Electron sidecar owns Apple sign-in, authenticated
+MusicKit API transport, playback, Widevine, and audio. Rust sends only
+allowlisted relative Apple paths and receives bounded responses over a typed
+line protocol; Jamelade does not remove DRM or download decrypted music.
 
 ## Development
 

@@ -66,6 +66,10 @@ pub struct Snapshot {
     pub has_next: bool,
     pub has_previous: bool,
     pub active: bool,
+    /// Whether Apple Music currently marks this catalog song as a favourite.
+    /// The expanded player uses the same shared override as every song row, so
+    /// a star changed in either place changes everywhere.
+    pub favorite: bool,
     pub shuffle: bool,
     /// Whether the queue sidebar is open, so the bar's toggle agrees with it.
     pub queue_open: bool,
@@ -114,6 +118,7 @@ impl Default for Snapshot {
             has_next: false,
             has_previous: false,
             active: false,
+            favorite: false,
             shuffle: false,
             queue_open: false,
             lyrics_open: false,
@@ -216,6 +221,7 @@ pub enum NowPlayingOutput {
     OpenAlbum,
     OpenArtist,
     CopyLink,
+    ToggleFavorite,
 }
 
 #[relm4::component(pub)]
@@ -548,10 +554,9 @@ impl SimpleComponent for NowPlaying {
                 },
 
                 // A direct door from the thing playing to the words for it.
-                // The Lyrics sidebar row remains the discoverable route; this
-                // one is the quick route once a track is already on.
+                // Lyrics lives with the player rather than in navigation.
                 gtk::Button {
-                    set_icon_name: "view-list-symbolic",
+                    set_icon_name: "format-justify-left-symbolic",
                     set_tooltip_text: Some("Lyrics"),
                     add_css_class: "flat",
                     add_css_class: "circular",

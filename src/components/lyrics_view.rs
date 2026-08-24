@@ -148,7 +148,7 @@ impl LyricsView {
         seek: impl Fn(u64) + 'static,
     ) -> Self {
         let disabled = adw::StatusPage::builder()
-            .icon_name("view-list-symbolic")
+            .icon_name("format-justify-left-symbolic")
             .title("Lyrics are not connected yet")
             .description(
                 "Sign in to use Apple Music lyrics, or review the separately optional third-party fallbacks in Privacy Preferences.",
@@ -163,12 +163,12 @@ impl LyricsView {
         disabled.set_child(Some(&enable_button));
 
         let waiting = adw::StatusPage::builder()
-            .icon_name("view-list-symbolic")
+            .icon_name("format-justify-left-symbolic")
             .title("Nothing playing")
             .description("Start a song, then its lyrics will appear here.")
             .build();
         let no_lyrics = adw::StatusPage::builder()
-            .icon_name("view-list-symbolic")
+            .icon_name("format-justify-left-symbolic")
             .title("No lyrics found")
             .description("None of the enabled sources has a match for this recording.")
             .build();

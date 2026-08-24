@@ -114,6 +114,9 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
         .build();
     let copy_link = button("edit-copy-symbolic", ["flat", "circular"]);
     copy_link.set_tooltip_text(Some("Copy Apple Music link"));
+    let lyrics = button("format-justify-left-symbolic", ["flat", "circular"]);
+    lyrics.set_tooltip_text(Some("Lyrics"));
+    let favorite = button("starred-symbolic", ["flat", "circular"]);
 
     // **Volume lives here now.** The bar drops its own below the narrow
     // breakpoint, and shuffle and repeat were already down here to fall back
@@ -156,6 +159,14 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
         let sender = sender.clone();
         copy_link.connect_clicked(move |_| sender.input(PlayerViewInput::CopyLink));
     }
+    {
+        let sender = sender.clone();
+        lyrics.connect_clicked(move |_| sender.input(PlayerViewInput::ShowLyrics));
+    }
+    {
+        let sender = sender.clone();
+        favorite.connect_clicked(move |_| sender.input(PlayerViewInput::ToggleFavorite));
+    }
 
     for (widget, msg) in [
         (&previous, PlayerViewInput::Previous),
@@ -183,14 +194,17 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
 
     // Under the play button rather than beside it, so it never disturbs the
     // count that keeps play centred.
-    let queue_row = gtk::Box::builder()
+    let queue_row = gtk::Grid::builder()
         .halign(gtk::Align::Center)
-        .spacing(6)
+        .column_spacing(6)
+        .column_homogeneous(true)
         .build();
-    queue_row.append(&queue);
-    queue_row.append(&segment_loop);
-    queue_row.append(&copy_link);
-    queue_row.append(&volume);
+    queue_row.attach(&queue, 0, 0, 1, 1);
+    queue_row.attach(&favorite, 1, 0, 1, 1);
+    queue_row.attach(&segment_loop, 2, 0, 1, 1);
+    queue_row.attach(&lyrics, 3, 0, 1, 1);
+    queue_row.attach(&copy_link, 4, 0, 1, 1);
+    queue_row.attach(&volume, 5, 0, 1, 1);
     into.append(&queue_row);
 
     Bits {
@@ -207,6 +221,7 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
         repeat,
         segment_loop,
         copy_link,
+        favorite,
         shown_loop: std::cell::Cell::new(LoopMarks::Off),
     }
 }
@@ -226,6 +241,7 @@ pub(super) struct Bits {
     repeat: gtk::Button,
     segment_loop: gtk::Button,
     copy_link: gtk::Button,
+    favorite: gtk::Button,
     shown_loop: std::cell::Cell<LoopMarks>,
 }
 
@@ -268,6 +284,18 @@ impl PlayerView {
             .set_opacity(mode_opacity(!matches!(self.snap.repeat, Repeat::Off)));
         bits.segment_loop.set_sensitive(self.snap.duration_ms > 0);
         bits.copy_link.set_sensitive(self.snap.catalog_id.is_some());
+        bits.favorite.set_sensitive(self.snap.catalog_id.is_some());
+        bits.favorite.set_opacity(mode_opacity(self.snap.favorite));
+        bits.favorite.set_tooltip_text(Some(if self.snap.favorite {
+            "Remove favourite"
+        } else {
+            "Favourite"
+        }));
+        if self.snap.favorite {
+            bits.favorite.add_css_class("favorite-star");
+        } else {
+            bits.favorite.remove_css_class("favorite-star");
+        }
         bits.next.set_sensitive(self.snap.has_next);
         // **Silenced while we write.** GTK cannot tell a programmatic write
         // from a drag, and `sender.input` queues — so an unsilenced write comes

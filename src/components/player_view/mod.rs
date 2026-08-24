@@ -47,6 +47,9 @@ pub struct PlayerView {
     transport: gtk::Box,
     /// The hand-built transport's refreshable pieces. See [`Bits`].
     bits: Option<Bits>,
+    /// Keeps the empty right-hand column exactly as wide as the cover column,
+    /// so the title and controls stay under the sheet's centred drag handle.
+    art_balance_group: gtk::SizeGroup,
     /// The containers `relayout` moves things between. Only available once the
     /// widgets exist, which is after `view_output!`.
     slots: Option<Slots>,
@@ -61,23 +64,23 @@ pub struct PlayerView {
     art_anim: Option<adw::TimedAnimation>,
 }
 
-/// The four places something can live, plus the queue itself.
+/// The places the movable transport and queue can live.
 struct Slots {
     queue: adw::ToolbarView,
     queue_wide_rev: gtk::Revealer,
     queue_compact_rev: gtk::Revealer,
     queue_wide: gtk::Box,
     queue_compact: gtk::Box,
+    transport_wide: gtk::Box,
     transport_stacked: gtk::Box,
     transport_compact: gtk::Box,
 }
 
-/// Everything in the drawer that is not the artwork: the title, the scrubber,
-/// the transport, the queue row and the margins between them. **Measured at
-/// 302px** — the drawer's 562px minimum less a 260px cover.
+/// Everything in the narrow vertical drawer that is not the artwork. Measured
+/// at 302px; the wide strip does not use this arithmetic.
 ///
 /// It does not shrink, so it sets the arithmetic for how short the drawer can
-/// be: [`SHEET_MIN_H`] is this plus the smallest cover still worth drawing.
+/// be: [`SHEET_NARROW_MIN_H`] is this plus the smallest useful cover.
 const DRAWER_CHROME_H: i32 = 302;
 
 /// The smallest the artwork may be squeezed to before it stops reading as a
@@ -96,34 +99,41 @@ const ART_FLOOR: i32 = 96;
 /// Only ever asked with the queue open. Stacked, the cover *is* the view.
 const QUEUE_NEEDS_ROOM: i32 = 420;
 
-/// How much of the window the open drawer claims.
-const WINDOW_FRACTION: f64 = 0.7;
+/// The wide player is a compact horizontal strip and normally claims one third
+/// of the window. A narrow player still needs the vertical composition, so it
+/// keeps the older, taller share rather than squeezing its controls together.
+const WIDE_WINDOW_DIVISOR: i32 = 3;
+const NARROW_WINDOW_NUMERATOR: i32 = 7;
+const NARROW_WINDOW_DENOMINATOR: i32 = 10;
 
-/// The shortest the drawer may ever be, in logical pixels.
-///
-/// **260 was a number the content could not reach.** The chrome alone is 302px
-/// and the cover cannot be nothing, so the drawer's real minimum was 562 —
-/// `AdwBreakpointBin` said so out loud once the window could get short:
-/// *requested 562 px, 405 px available*.
-///
-/// [`DRAWER_CHROME_H`] + [`ART_FLOOR`], so it is now what the content can
-/// actually do rather than what we would have liked.
-const SHEET_MIN_H: i32 = DRAWER_CHROME_H + ART_FLOOR;
+/// Floors in logical pixels. Wide puts art and controls beside each other;
+/// narrow retains the vertical player's measured chrome plus its smallest art.
+const SHEET_WIDE_MIN_H: i32 = 210;
+const SHEET_NARROW_MIN_H: i32 = DRAWER_CHROME_H + ART_FLOOR;
 
-/// Tie the drawer's height to the window's, at [`WINDOW_FRACTION`].
+fn drawer_height(width: i32, height: i32) -> i32 {
+    if width >= WIDE_PX {
+        (height / WIDE_WINDOW_DIVISOR).max(SHEET_WIDE_MIN_H)
+    } else {
+        ((height * NARROW_WINDOW_NUMERATOR) / NARROW_WINDOW_DENOMINATOR).max(SHEET_NARROW_MIN_H)
+    }
+}
+
+/// Tie the drawer's height to the window's width-sensitive layout.
 ///
 /// `AdwBottomSheet` sizes the sheet to its child's **natural height** and offers
 /// no maximum or fraction of its own, so the number has to be computed and
 /// pushed down.
 ///
-/// The basis is the toplevel `GdkSurface`'s height, for two reasons. It is the
-/// one size that notifies on *every* resize, including tiling and maximising —
+/// The basis is the toplevel `GdkSurface`'s actual size. It notifies on *every*
+/// resize, including tiling and maximising —
 /// `GtkWindow:default-height` deliberately does not track those, because it
 /// stores the size to restore *to*. And reading the surface keeps this acyclic:
 /// our request changes the sheet's height, and the sheet never changes the
 /// surface.
 ///
-/// While closed this falls back to [`SHEET_MIN_H`] — **not to `-1`**. The
+/// While closed this falls back to the current layout's floor — **not to
+/// `-1`**. The
 /// request has to come off, or it fights the user dragging the window shorter.
 /// But `-1` does not restore the floor `view!` declared with `set_size_request`;
 /// it *clears* it, because they are the same property, leaving the
@@ -146,19 +156,22 @@ pub fn fill_window(
         let (window, sheet, content) = (window.clone(), sheet.clone(), content.clone());
         let player = player.clone();
         std::rc::Rc::new(move || {
-            let height = window.surface().map_or(0, |surface| surface.height());
-            let target = if sheet.is_open() && height > 0 {
-                (f64::from(height) * WINDOW_FRACTION) as i32
+            let (width, height) = window
+                .surface()
+                .map_or((0, 0), |surface| (surface.width(), surface.height()));
+            let floor = if width >= WIDE_PX {
+                SHEET_WIDE_MIN_H
             } else {
-                SHEET_MIN_H
+                SHEET_NARROW_MIN_H
             };
-            let target = target.max(SHEET_MIN_H);
+            let target = if sheet.is_open() && width > 0 && height > 0 {
+                drawer_height(width, height)
+            } else {
+                floor
+            };
             content.set_height_request(target);
-            // The artwork is the only part of the drawer that can give, so it
-            // is the only thing that can make a short window fit. Told the
-            // height rather than measuring it: this runs on exactly the two
-            // events that change it, and a widget cannot ask how much room it
-            // is about to be given.
+            // Told the target rather than measuring itself: a widget cannot
+            // ask how much room it is about to be given.
             let _ = player.send(PlayerViewInput::RoomFor(target));
         })
     };
@@ -171,23 +184,29 @@ pub fn fill_window(
     // surface the window has ever had. They are harmless — a dead surface never
     // notifies, and `set_size_request` no-ops on an unchanged value — but the
     // list only grows, which is the kind of thing that is free until it is not.
-    let connected: std::rc::Rc<std::cell::RefCell<Option<(gdk::Surface, glib::SignalHandlerId)>>> =
-        std::rc::Rc::new(std::cell::RefCell::new(None));
+    let connected: std::rc::Rc<
+        std::cell::RefCell<Option<(gdk::Surface, glib::SignalHandlerId, glib::SignalHandlerId)>>,
+    > = std::rc::Rc::new(std::cell::RefCell::new(None));
     window.connect_realize({
         let apply = apply.clone();
         move |window| {
             let Some(surface) = window.surface() else {
                 return;
             };
-            if let Some((old, id)) = connected.borrow_mut().take() {
-                old.disconnect(id);
+            if let Some((old, height_id, width_id)) = connected.borrow_mut().take() {
+                old.disconnect(height_id);
+                old.disconnect(width_id);
             }
             apply();
-            let id = surface.connect_height_notify({
+            let height_id = surface.connect_height_notify({
                 let apply = apply.clone();
                 move |_| apply()
             });
-            *connected.borrow_mut() = Some((surface, id));
+            let width_id = surface.connect_width_notify({
+                let apply = apply.clone();
+                move |_| apply()
+            });
+            *connected.borrow_mut() = Some((surface, height_id, width_id));
         }
     });
 
@@ -215,6 +234,7 @@ const WIDE_PX: i32 = 860;
 /// Artwork sizes: generous when it is the subject, a thumbnail when the queue
 /// has taken the space and it is only there to say which record this is.
 const ART_LARGE: i32 = 260;
+const ART_WIDE: i32 = 112;
 const ART_THUMB: i32 = 72;
 
 /// The queue and artwork share one transition so their movement finishes together.
@@ -246,6 +266,8 @@ pub enum PlayerViewInput {
     OpenAlbum,
     OpenArtist,
     CopyLink,
+    ShowLyrics,
+    ToggleFavorite,
     VolumeChanged(f64),
     /// How tall the drawer is about to be. See [`fill_window`].
     RoomFor(i32),
@@ -267,7 +289,7 @@ impl SimpleComponent for PlayerView {
             // How tall it actually opens is [`fill_window`]'s business, not
             // this number's: this is the floor it may never go under, that is
             // the share of the window it asks for.
-            set_size_request: (300, SHEET_MIN_H),
+            set_size_request: (300, SHEET_WIDE_MIN_H),
 
             #[wrap(Some)]
             set_child = &gtk::Box {
@@ -291,11 +313,9 @@ impl SimpleComponent for PlayerView {
                     #[watch]
                     set_vexpand: model.stacked(),
 
-                    // The player, as one column: artwork, then what is
-                    // playing, then the transport **under** it. The transport
-                    // used to sit in the metadata column, which put it beside
-                    // the artwork rather than below it in every layout wide
-                    // enough to have a choice.
+                    // Narrow: artwork, metadata and controls form a column.
+                    // Wide: artwork sits beside a compact metadata/control
+                    // column so the drawer can stay one third of the window.
                     gtk::Box {
                         set_orientation: gtk::Orientation::Vertical,
                         set_hexpand: true,
@@ -322,9 +342,8 @@ impl SimpleComponent for PlayerView {
                             gtk::Align::Start
                         },
 
-                        // Artwork above the metadata, except in the one layout
-                        // with no room for it — compact, queue open — where the
-                        // artwork shrinks to a thumbnail and sits beside it.
+                        // Artwork above metadata in the narrow player, beside
+                        // it in the wide strip or a compact queue layout.
                         #[name = "head"]
                         gtk::Box {
                             set_spacing: 16,
@@ -335,8 +354,10 @@ impl SimpleComponent for PlayerView {
                                 gtk::Orientation::Horizontal
                             },
 
-                            #[name = "art_slot"]
+                            #[name = "art_column"]
                             gtk::Box {
+                                set_orientation: gtk::Orientation::Vertical,
+                                set_spacing: 2,
                                 #[watch]
                                 set_halign: if model.stacked() {
                                     gtk::Align::Center
@@ -348,6 +369,39 @@ impl SimpleComponent for PlayerView {
                                     gtk::Align::End
                                 } else {
                                     gtk::Align::Center
+                                },
+
+                                #[name = "art_slot"]
+                                gtk::Button {
+                                    add_css_class: "flat",
+                                    add_css_class: "player-cover-link",
+                                    set_has_frame: false,
+                                    set_tooltip_text: Some("Open album"),
+                                    #[watch]
+                                    set_sensitive: model.snap.catalog_id.is_some(),
+                                    connect_clicked => PlayerViewInput::OpenAlbum,
+                                },
+
+                                gtk::Button {
+                                    add_css_class: "flat",
+                                    add_css_class: "player-album-link",
+                                    add_css_class: "player-metadata-link",
+                                    set_tooltip_text: Some("Open album"),
+                                    #[watch]
+                                    set_visible: model.wide && !model.snap.album.is_empty(),
+                                    #[watch]
+                                    set_sensitive: model.snap.catalog_id.is_some(),
+                                    connect_clicked => PlayerViewInput::OpenAlbum,
+
+                                    #[wrap(Some)]
+                                    set_child = &gtk::Label {
+                                        set_ellipsize: gtk::pango::EllipsizeMode::End,
+                                        set_max_width_chars: 18,
+                                        set_use_markup: false,
+                                        add_css_class: "heading",
+                                        #[watch]
+                                        set_label: &model.snap.album,
+                                    },
                                 },
                             },
 
@@ -492,9 +546,9 @@ impl SimpleComponent for PlayerView {
                                                     set_use_markup: false,
                                                     #[watch]
                                                     set_css_classes: if model.stacked() {
-                                                        &["title-4"]
+                                                        &["title-2"]
                                                     } else {
-                                                        &["caption"]
+                                                        &["heading"]
                                                     },
                                                     #[watch]
                                                     set_label: &model.snap.artist,
@@ -506,7 +560,7 @@ impl SimpleComponent for PlayerView {
                                                 add_css_class: "player-metadata-link",
                                                 set_tooltip_text: Some("Open album"),
                                                 #[watch]
-                                                set_visible: !model.snap.album.is_empty(),
+                                                set_visible: !model.wide && !model.snap.album.is_empty(),
                                                 #[watch]
                                                 set_sensitive: model.snap.catalog_id.is_some(),
                                                 connect_clicked => PlayerViewInput::OpenAlbum,
@@ -516,7 +570,12 @@ impl SimpleComponent for PlayerView {
                                                     set_ellipsize: gtk::pango::EllipsizeMode::End,
                                                     set_max_width_chars: 34,
                                                     set_use_markup: false,
-                                                    add_css_class: "caption",
+                                                    #[watch]
+                                                    set_css_classes: if model.stacked() {
+                                                        &["title-2"]
+                                                    } else {
+                                                        &["heading"]
+                                                    },
                                                     #[watch]
                                                     set_label: &model.snap.album,
                                                 },
@@ -524,11 +583,36 @@ impl SimpleComponent for PlayerView {
                                         },
                                     },
                                 },
+
+                                // On a wide window the whole player becomes a
+                                // low horizontal strip: cover, metadata, then
+                                // controls. Keeping the transport in the same
+                                // row is what lets the drawer be one third of
+                                // the window without clipping or scrolling.
+                                #[name = "transport_wide"]
+                                gtk::Box {
+                                    set_orientation: gtk::Orientation::Vertical,
+                                    set_valign: gtk::Align::Center,
+                                    #[watch]
+                                    set_visible: model.wide,
+                                },
+                            },
+
+                            // The cover occupies the left of the wide strip.
+                            // Mirror its exact allocated width on the right so
+                            // metadata and transport remain centred to the
+                            // BottomSheet handle rather than to the leftover
+                            // space beside the cover.
+                            #[name = "art_balance"]
+                            gtk::Box {
+                                set_width_request: ART_WIDE,
+                                #[watch]
+                                set_visible: model.wide,
                             },
                         },
 
-                        // Where the transport lives whenever the artwork is
-                        // above it, which is every layout but one.
+                        // Where the transport lives in the narrow vertical
+                        // player.
                         //
                         // **Hidden when it is that one.** An empty box is still
                         // a child, and a visible child takes its share of the
@@ -598,6 +682,8 @@ impl SimpleComponent for PlayerView {
                     set_margin_start: 24,
                     set_margin_end: 24,
                     set_margin_bottom: 18,
+                    #[watch]
+                    set_visible: !model.wide && model.queue_shown,
                 },
             },
         }
@@ -614,11 +700,12 @@ impl SimpleComponent for PlayerView {
             scrubbing: false,
             scrub_gen: 0,
             wide: true,
-            room_for: SHEET_MIN_H,
+            room_for: SHEET_WIDE_MIN_H,
             queue_shown: false,
             transport: gtk::Box::new(gtk::Orientation::Vertical, 12),
             slots: None,
             bits: None,
+            art_balance_group: gtk::SizeGroup::new(gtk::SizeGroupMode::Horizontal),
             art_px: std::rc::Rc::new(std::cell::Cell::new(ART_LARGE)),
             art_anim: None,
         };
@@ -633,7 +720,9 @@ impl SimpleComponent for PlayerView {
             adw::ToolbarView::new()
         });
         let widgets = view_output!();
-        model.cover.attach_first(&widgets.art_slot);
+        model.art_balance_group.add_widget(&widgets.art_column);
+        model.art_balance_group.add_widget(&widgets.art_balance);
+        model.cover.attach_to_button(&widgets.art_slot);
         model.cover.empty_sleeve(ART_LARGE);
 
         model.bits = Some(build_transport(&model.transport, &sender));
@@ -665,6 +754,7 @@ impl SimpleComponent for PlayerView {
             queue_compact_rev: widgets.queue_compact_rev.clone(),
             queue_wide: widgets.queue_wide.clone(),
             queue_compact: widgets.queue_compact.clone(),
+            transport_wide: widgets.transport_wide.clone(),
             transport_stacked: widgets.transport_stacked.clone(),
             transport_compact: widgets.transport_compact.clone(),
         });
@@ -790,6 +880,12 @@ impl SimpleComponent for PlayerView {
             PlayerViewInput::CopyLink => {
                 let _ = sender.output(NowPlayingOutput::CopyLink);
             }
+            PlayerViewInput::ShowLyrics => {
+                let _ = sender.output(NowPlayingOutput::ShowLyrics);
+            }
+            PlayerViewInput::ToggleFavorite => {
+                let _ = sender.output(NowPlayingOutput::ToggleFavorite);
+            }
             PlayerViewInput::VolumeChanged(v) => {
                 // Same shape as the bar's. `refresh` blocks this handler while
                 // it writes, so everything arriving here is a real gesture; the
@@ -824,19 +920,17 @@ impl PlayerView {
     /// Whether the artwork sits **above** the rest of the player rather than
     /// beside it.
     ///
-    /// One question, asked in four places, and the reason it is a method: this
-    /// is the layout. Every layout stacks — artwork, then what is playing, then
-    /// the transport under it — except the single case with no vertical room to
-    /// spare, compact with the queue open, where the artwork becomes a
-    /// thumbnail beside the title and the queue takes the height.
+    /// Narrow without a queue is the one vertical composition. Wide windows
+    /// use a compact horizontal strip; a narrow queue uses a thumbnail and
+    /// gives the remaining height to its rows.
     fn stacked(&self) -> bool {
-        self.wide || !self.queue_shown
+        !self.wide && !self.queue_shown
     }
 
-    /// Text is centred only when the artwork is above it — a column reads as a
-    /// column. Beside a thumbnail, it aligns left.
+    /// The main player reads as a centred composition. Only the compact queue
+    /// layout aligns metadata left beside its thumbnail.
     fn centred_text(&self) -> bool {
-        self.stacked()
+        self.wide || self.stacked()
     }
 
     /// Put the transport and the queue where this layout wants them.
@@ -852,14 +946,11 @@ impl PlayerView {
         let Some(slots) = self.slots.as_ref() else {
             return;
         };
-        // The transport goes under the artwork wherever the artwork is above
-        // it, which is everywhere but the compact layout with the queue open —
-        // there it drops to the foot of the drawer, under the queue, because
-        // that is still below the artwork and it must stay visible.
-        //
-        // The queue's home is a different question, and asking it separately is
-        // the point: it depends on width alone, the transport's on the layout.
-        let transport_home = if self.stacked() {
+        // Wide keeps the transport beside the cover. Narrow puts it under the
+        // cover, or below the queue when that queue needs the drawer's height.
+        let transport_home = if self.wide {
+            &slots.transport_wide
+        } else if self.stacked() {
             &slots.transport_stacked
         } else {
             &slots.transport_compact
@@ -872,22 +963,18 @@ impl PlayerView {
         reparent(&self.transport, transport_home);
         reparent(&slots.queue, queue_home);
 
-        // The artwork is the elastic element: large when it is the subject,
-        // a thumbnail once the queue needs the room — and it travels between
-        // the two rather than cutting, so it reads as the same picture moving.
-        // Stacked, the cover takes whatever the drawer has left over after the
-        // chrome — capped at `ART_LARGE` so a tall window does not grow it past
-        // what the layout was designed around, and floored so it never becomes
-        // an icon. Beside the queue it is a thumbnail regardless: it is there
-        // to say which record this is, not to be looked at.
+        // The artwork is large in the narrow player, restrained in the wide
+        // strip, and only a thumbnail beside a narrow queue.
         // Beside the queue on a short drawer the cover goes entirely: its 72px
         // buys a row and a bit, and nothing that matters is lost — the sleeve is
         // still the backdrop behind all of this, and the title still names it.
-        let room_for_cover = self.stacked() || self.room_for >= QUEUE_NEEDS_ROOM;
+        let room_for_cover = self.wide || self.stacked() || self.room_for >= QUEUE_NEEDS_ROOM;
         self.cover.set_shown(room_for_cover);
         if room_for_cover {
             self.resize_cover(if self.stacked() {
                 (self.room_for - DRAWER_CHROME_H).clamp(ART_FLOOR, ART_LARGE)
+            } else if self.wide {
+                ART_WIDE
             } else {
                 ART_THUMB
             });
@@ -931,5 +1018,22 @@ impl PlayerView {
         anim.set_value_from(f64::from(self.art_px.get()));
         anim.set_value_to(f64::from(target));
         anim.play();
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    #[test]
+    fn wide_drawer_uses_one_third_with_a_small_floor() {
+        assert_eq!(drawer_height(1000, 900), 300);
+        assert_eq!(drawer_height(1000, 600), SHEET_WIDE_MIN_H);
+    }
+
+    #[test]
+    fn narrow_drawer_keeps_room_for_the_vertical_player() {
+        assert_eq!(drawer_height(600, 800), 560);
+        assert_eq!(drawer_height(600, 400), SHEET_NARROW_MIN_H);
     }
 }

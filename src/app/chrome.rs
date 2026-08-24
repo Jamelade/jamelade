@@ -14,7 +14,7 @@ use relm4::{ComponentSender, adw, gtk};
 use super::{AppModel, AppMsg};
 use crate::companion::Companion;
 use crate::components::jamkin_mode::JamkinMode;
-use crate::settings::JamkinQuality;
+use crate::settings::{JamkinQuality, Theme};
 use crate::style::Accent;
 
 impl super::AppModel {
@@ -504,9 +504,10 @@ impl AppModel {
         let page = adw::PreferencesPage::new();
 
         let appearance = adw::PreferencesGroup::builder().title("Appearance").build();
+        let theme_names: Vec<&str> = Theme::ALL.iter().map(|theme| theme.label()).collect();
         let theme = adw::ComboRow::builder()
             .title("Theme")
-            .model(&gtk::StringList::new(&["Follow System", "Light", "Dark"]))
+            .model(&gtk::StringList::new(&theme_names))
             .selected(self.settings.theme.index())
             .build();
         {
@@ -531,12 +532,12 @@ impl AppModel {
         }
         appearance.add(&accent);
 
-        // #145: a photograph behind small type is distracting to some people,
-        // and libadwaita's own surfaces are plain. Off, the window and player
-        // fall back to their quiet Jamkin gradients.
+        // One switch for both parts of album-aware glass: the cover and its
+        // extracted colours. Off, named themes own every surface and stock
+        // Light/Dark fall back to their quiet Jamkin-accented material.
         let backdrop = adw::SwitchRow::builder()
-            .title("Album Art Backdrop")
-            .subtitle("The current cover, blurred, behind the whole window")
+            .title("Album Liquid Glass")
+            .subtitle("Blend the current cover and its colours through the window")
             .active(self.settings.player_backdrop)
             .build();
         {
@@ -921,6 +922,20 @@ impl AppModel {
             });
         }
         privacy.add(&lyrics);
+        let lyrics_ovh = adw::SwitchRow::builder()
+            .title("Fallback lyrics from Lyrics.ovh")
+            .subtitle(
+                "Last resort; sends artist and title to its open-source server, which may consult several lyric sites",
+            )
+            .active(self.settings.lyrics_ovh_enabled)
+            .build();
+        {
+            let sender = sender.clone();
+            lyrics_ovh.connect_active_notify(move |row| {
+                sender.input(AppMsg::SetLyricsOvhEnabled(row.is_active()));
+            });
+        }
+        privacy.add(&lyrics_ovh);
 
         page.add(&appearance);
         page.add(&jamkin);

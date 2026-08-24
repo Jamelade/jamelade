@@ -142,6 +142,12 @@ impl Cover {
         parent.prepend(&self.stack);
     }
 
+    /// Put the cover inside a semantic button when the picture itself is a
+    /// navigation affordance.
+    pub fn attach_to_button(&self, parent: &gtk::Button) {
+        parent.set_child(Some(&self.stack));
+    }
+
     /// Show or hide the whole picture, whichever face it is wearing.
     pub fn set_shown(&self, shown: bool) {
         self.stack.set_visible(shown);

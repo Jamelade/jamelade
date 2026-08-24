@@ -23,6 +23,7 @@ impl AppModel {
     fn lyrics_providers(&self) -> Providers {
         Providers {
             lrclib: self.settings.lyrics_enabled,
+            lyrics_ovh: self.settings.lyrics_ovh_enabled,
         }
     }
 

@@ -1,7 +1,4 @@
 #!/bin/sh
-# SPDX-FileCopyrightText: 2026 Jamelade contributors
-# SPDX-License-Identifier: GPL-3.0-or-later
-
 # Install or remove Jamelade's narrow, per-user launcher-icon helper.
 set -eu
 

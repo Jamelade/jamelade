@@ -14,10 +14,18 @@ use ashpd::desktop::dynamic_launcher::{DynamicLauncherProxy, PrepareInstallOptio
 
 use crate::companion::Companion;
 
+#[cfg(not(feature = "broker-test"))]
 pub const DESKTOP_FILE_ID: &str = "io.github.Jamelade.Jamelade.Launcher.desktop";
+#[cfg(feature = "broker-test")]
+pub const DESKTOP_FILE_ID: &str = "io.github.Jamelade.Jamelade.BrokerTest.Launcher.desktop";
+#[cfg(not(feature = "broker-test"))]
 pub const PREFERENCE_HELP: &str = "With the optional icon helper, the existing Jamelade launcher \
     updates directly. Without it, approve KDE's “Add Application” dialog, restart Jamelade, and \
     re-pin the launcher if the dock keeps its old icon.";
+#[cfg(feature = "broker-test")]
+pub const PREFERENCE_HELP: &str = "This test edition cannot change Jamelade's launcher. Approve \
+    KDE's “Add Application” dialog, restart Jamelade Broker Test, and re-pin its launcher if the \
+    dock keeps the old icon.";
 pub const CONFIRM_HELP: &str =
     "Changing the launcher icon… approve the desktop dialog if one appears";
 pub const HELPER_CHANGED_HELP: &str =
@@ -25,10 +33,14 @@ pub const HELPER_CHANGED_HELP: &str =
 pub const PORTAL_CHANGED_HELP: &str = "Icon changed. Restart Jamelade to update the app menu; \
     re-pin it if the dock keeps the old icon.";
 
+#[cfg(not(feature = "broker-test"))]
 const HELPER_BUS: &str = "io.github.Jamelade.IconHelper";
+#[cfg(not(feature = "broker-test"))]
 const HELPER_PATH: &str = "/io/github/Jamelade/IconHelper";
+#[cfg(not(feature = "broker-test"))]
 const HELPER_INTERFACE: &str = "io.github.Jamelade.IconHelper";
 
+#[cfg(not(feature = "broker-test"))]
 const DESKTOP_ENTRY: &str = "[Desktop Entry]\n\
 Type=Application\n\
 GenericName=Music Player\n\
@@ -39,6 +51,17 @@ Categories=AudioVideo;Audio;Player;\n\
 Keywords=Music;Apple;Player;Audio;Playlist;Streaming;\n\
 StartupNotify=true\n\
 StartupWMClass=io.github.Jamelade.Jamelade.Launcher\n";
+#[cfg(feature = "broker-test")]
+const DESKTOP_ENTRY: &str = "[Desktop Entry]\n\
+Type=Application\n\
+GenericName=Music Player\n\
+Comment=Evaluate Jamelade's hardened browser broker separately\n\
+Exec=jamelade-broker-test\n\
+Terminal=false\n\
+Categories=AudioVideo;Audio;Player;\n\
+Keywords=Music;Apple;Player;Audio;Playlist;Streaming;\n\
+StartupNotify=true\n\
+StartupWMClass=io.github.Jamelade.Jamelade.BrokerTest.Launcher\n";
 const MAX_LAUNCHER_ICON_BYTES: usize = 10 * 1024 * 1024;
 
 /// Ask the desktop to install the selected rounded tile. No Apple data,
@@ -59,17 +82,25 @@ pub async fn install(companion: Companion) -> Result<InstallMethod> {
 }
 
 async fn install_with_helper(companion: Companion) -> Result<()> {
-    let connection = ashpd::zbus::Connection::session()
-        .await
-        .context("the session bus is unavailable")?;
-    let proxy = ashpd::zbus::Proxy::new(&connection, HELPER_BUS, HELPER_PATH, HELPER_INTERFACE)
-        .await
-        .context("the icon helper is unavailable")?;
-    let _: () = proxy
-        .call("SetIcon", &(companion.label(),))
-        .await
-        .context("the icon helper rejected the change")?;
-    Ok(())
+    #[cfg(feature = "broker-test")]
+    {
+        let _ = companion;
+        anyhow::bail!("the stable launcher helper is disabled in the broker test build");
+    }
+    #[cfg(not(feature = "broker-test"))]
+    {
+        let connection = ashpd::zbus::Connection::session()
+            .await
+            .context("the session bus is unavailable")?;
+        let proxy = ashpd::zbus::Proxy::new(&connection, HELPER_BUS, HELPER_PATH, HELPER_INTERFACE)
+            .await
+            .context("the icon helper is unavailable")?;
+        let _: () = proxy
+            .call("SetIcon", &(companion.label(),))
+            .await
+            .context("the icon helper rejected the change")?;
+        Ok(())
+    }
 }
 
 async fn install_with_portal(companion: Companion) -> Result<()> {
@@ -121,7 +152,11 @@ mod tests {
     fn portal_template_cannot_override_its_confirmed_name_or_icon() {
         assert!(!DESKTOP_ENTRY.lines().any(|line| line.starts_with("Name=")));
         assert!(!DESKTOP_ENTRY.lines().any(|line| line.starts_with("Icon=")));
-        assert!(DESKTOP_ENTRY.contains("Exec=jamelade"));
+        assert!(DESKTOP_ENTRY.contains(if cfg!(feature = "broker-test") {
+            "Exec=jamelade-broker-test"
+        } else {
+            "Exec=jamelade"
+        }));
         assert!(DESKTOP_ENTRY.contains(crate::LAUNCHER_ID));
     }
 
@@ -134,9 +169,20 @@ mod tests {
     #[test]
     fn icon_help_explains_the_desktop_confirmation() {
         assert!(PREFERENCE_HELP.contains("Add Application"));
-        assert!(PREFERENCE_HELP.contains("restart Jamelade"));
+        assert!(PREFERENCE_HELP.contains(if cfg!(feature = "broker-test") {
+            "restart Jamelade Broker Test"
+        } else {
+            "restart Jamelade"
+        }));
         assert!(PREFERENCE_HELP.contains("re-pin"));
-        assert!(PREFERENCE_HELP.contains("optional icon helper"));
+        assert_eq!(
+            PREFERENCE_HELP.contains("optional icon helper"),
+            !cfg!(feature = "broker-test")
+        );
+        assert_eq!(
+            PREFERENCE_HELP.contains("cannot change Jamelade's launcher"),
+            cfg!(feature = "broker-test")
+        );
         assert!(PORTAL_CHANGED_HELP.contains("Restart Jamelade"));
         assert!(!HELPER_CHANGED_HELP.contains("Restart"));
     }

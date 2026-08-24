@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Jamelade Broker Test
+GenericName=Music Player
+Comment=Evaluate Jamelade's hardened browser broker separately
+Exec=jamelade-broker-test
+Icon=io.github.Jamelade.Jamelade.BrokerTest
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=Music;Apple;Player;Audio;Playlist;Streaming;
+StartupNotify=true
+NoDisplay=true
+StartupWMClass=io.github.Jamelade.Jamelade.BrokerTest

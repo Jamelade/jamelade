@@ -258,30 +258,35 @@ impl AppModel {
                 // two removals can finish out of order. `Event::LibraryWrite`
                 // carries the id and is what settles them.
             }
-            Event::Tokens(tokens) => {
-                // `has_user_token` is the one that matters after sign-in: a
-                // developer token alone gets you catalog search but not
-                // playback, and the difference is otherwise invisible.
+            Event::Session(session) => {
+                // This is deliberately credential-free. The distinction still
+                // matters: the public catalog can load before the account and
+                // subscription-backed library are ready.
                 tracing::info!(
-                    authorized = tokens.authorized,
-                    has_user_token = tokens.music_user_token.is_some(),
-                    "tokens harvested"
+                    authorized = session.authorized,
+                    has_user_token = session.has_user_token,
+                    storefront = %session.storefront,
+                    "browser-owned Apple session reflected"
                 );
                 // **Symmetric**, like `HookReady` and `Authorization` above and
                 // below. Promoting without ever demoting was a real bug: a
-                // `tokens` event carrying `authorized=false` left the stage on
+                // session event carrying `authorized=false` left the stage on
                 // `Ready`, so for the moment before the matching
                 // `Authorization` event arrived the app believed it was signed
                 // in while holding no user token — and the auto-load below
                 // fired a request that could only ever 403.
-                self.stage = if tokens.authorized {
+                self.stage = if session.authorized {
                     Stage::Ready
                 } else {
                     Stage::SignedOut
                 };
-                self.tokens = Some(tokens.clone());
+                self.apple_session = Some(session.clone());
                 self.wake_playlist_art(sender);
             }
+            // Consumed by `player::sidecar` before ordinary events are
+            // delivered. Keep a defensive arm so protocol drift cannot expose
+            // a private response body through generic diagnostics.
+            Event::ApiResponse(_) => tracing::warn!("orphaned browser broker response"),
             Event::Authorization { authorized } => {
                 tracing::info!(authorized, "authorization changed");
                 self.stage = if *authorized {
@@ -435,8 +440,8 @@ impl AppModel {
 
         // Put back what was playing when the app last closed. Gated the same
         // way the library load is — there is nothing to restore into without a
-        // session — and once per run, so a token refresh cannot restart it.
-        if matches!(self.stage, Stage::Ready) && !self.restored && self.tokens.is_some() {
+        // session — and once per run, so a browser refresh cannot restart it.
+        if matches!(self.stage, Stage::Ready) && !self.restored && self.apple_session.is_some() {
             self.restored = true;
             self.restore_session();
         }

@@ -24,6 +24,17 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "cmd")]
 pub enum Command {
+    /// Ask MusicKit's own authenticated browser client for one allowlisted
+    /// Apple Music API resource. The sidecar constructs the origin and owns
+    /// every credential; Rust supplies only a relative path and never sees a
+    /// developer token, Music User Token, or cookie.
+    #[serde(rename = "apiRequest", rename_all = "camelCase")]
+    ApiRequest {
+        request_id: u64,
+        method: ApiMethod,
+        path: String,
+    },
+
     /// Load a whole queue in ONE call and start playing at `start_position`.
     ///
     /// This is the gapless rule (ARCHITECTURE.md rule 3) expressed as a type: there
@@ -149,8 +160,8 @@ pub enum Command {
     /// which is the only place that can clear those cookies.
     #[serde(rename = "signOut")]
     SignOut,
-    #[serde(rename = "refreshTokens")]
-    RefreshTokens,
+    #[serde(rename = "refreshSession")]
+    RefreshSession,
     #[serde(rename = "quit")]
     Quit,
 }
@@ -160,6 +171,7 @@ impl Command {
     /// the two cannot drift.
     pub fn name(&self) -> &'static str {
         match self {
+            Self::ApiRequest { .. } => "apiRequest",
             Self::SetQueue { .. } => "setQueue",
             Self::PlayStation { .. } => "playStation",
             Self::Play => "play",
@@ -178,7 +190,7 @@ impl Command {
             Self::SetVolume { .. } => "setVolume",
             Self::SetShuffle { .. } => "setShuffle",
             Self::SetRepeat { .. } => "setRepeat",
-            Self::RefreshTokens => "refreshTokens",
+            Self::RefreshSession => "refreshSession",
             Self::ShowLogin => "showLogin",
             Self::Authorize => "authorize",
             Self::RemoveFromLibrary { .. } => "removeFromLibrary",
@@ -197,6 +209,15 @@ pub enum RepeatMode {
     None,
     One,
     All,
+}
+
+/// Verbs exposed by the browser broker. There is deliberately no arbitrary
+/// method string, request body, header map, or URL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ApiMethod {
+    Get,
+    Post,
 }
 
 /// Sidecar → Rust.
@@ -222,8 +243,6 @@ pub enum Event {
     HookBoot {
         #[serde(default)]
         ready_state: String,
-        #[serde(default)]
-        href: String,
     },
 
     /// The hook attached to `MusicKit.getInstance()`.
@@ -269,9 +288,15 @@ pub enum Event {
     #[serde(rename = "volume")]
     Volume { volume: f64 },
 
-    /// Harvested live on every launch, never cached (rule 7).
-    #[serde(rename = "tokens")]
-    Tokens(Tokens),
+    /// Credential-free projection of the browser-owned Apple session.
+    #[serde(rename = "session")]
+    Session(AppleSession),
+
+    /// One browser-broker result. `sidecar.rs` consumes this before ordinary
+    /// application events are delivered. Its custom `Debug` implementation
+    /// reports only the body length, never private catalogue or library data.
+    #[serde(rename = "api-response")]
+    ApiResponse(ApiResponse),
 
     #[serde(rename = "playbackState")]
     PlaybackState { state: PlaybackState },
@@ -356,51 +381,20 @@ pub enum Event {
     Error { code: String, detail: String },
 }
 
-/// Never logged, never written to `settings.ini` (rule 7).
-#[derive(Clone, Deserialize)]
+/// The only authentication state allowed to cross from Chromium into Rust.
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Tokens {
-    #[serde(deserialize_with = "credential")]
-    pub developer_token: String,
-    #[serde(default, deserialize_with = "optional_credential")]
-    pub music_user_token: Option<String>,
+pub struct AppleSession {
     #[serde(default = "default_storefront", deserialize_with = "storefront")]
     pub storefront: String,
     #[serde(default)]
     pub authorized: bool,
+    #[serde(default)]
+    pub has_user_token: bool,
 }
 
 fn default_storefront() -> String {
     "us".to_owned()
-}
-
-const MAX_CREDENTIAL_LENGTH: usize = 16 * 1024;
-
-fn valid_credential(value: &str) -> bool {
-    (32..=MAX_CREDENTIAL_LENGTH).contains(&value.len())
-        && value.trim() == value
-        && !value.contains('\r')
-        && !value.contains('\n')
-}
-
-fn credential<'de, D: serde::Deserializer<'de>>(de: D) -> Result<String, D::Error> {
-    let value = String::deserialize(de)?;
-    if valid_credential(&value) {
-        Ok(value)
-    } else {
-        Err(serde::de::Error::custom("invalid credential shape"))
-    }
-}
-
-fn optional_credential<'de, D: serde::Deserializer<'de>>(
-    de: D,
-) -> Result<Option<String>, D::Error> {
-    let value = Option::<String>::deserialize(de)?;
-    match value {
-        Some(value) if valid_credential(&value) => Ok(Some(value)),
-        Some(_) => Err(serde::de::Error::custom("invalid credential shape")),
-        None => Ok(None),
-    }
 }
 
 fn storefront<'de, D: serde::Deserializer<'de>>(de: D) -> Result<String, D::Error> {
@@ -412,17 +406,44 @@ fn storefront<'de, D: serde::Deserializer<'de>>(de: D) -> Result<String, D::Erro
     }
 }
 
-/// Hand-written so a stray `{:?}` can never leak a token into a log.
-impl std::fmt::Debug for Tokens {
+const MAX_API_BODY_BYTES: usize = 3 * 1024 * 1024;
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiResponse {
+    pub request_id: u64,
+    #[serde(deserialize_with = "api_status")]
+    pub status: u16,
+    #[serde(deserialize_with = "api_body")]
+    pub body: String,
+}
+
+fn api_status<'de, D: serde::Deserializer<'de>>(de: D) -> Result<u16, D::Error> {
+    let value = u16::deserialize(de)?;
+    if (100..=599).contains(&value) {
+        Ok(value)
+    } else {
+        Err(serde::de::Error::custom("invalid Apple Music status"))
+    }
+}
+
+fn api_body<'de, D: serde::Deserializer<'de>>(de: D) -> Result<String, D::Error> {
+    let value = String::deserialize(de)?;
+    if value.len() <= MAX_API_BODY_BYTES {
+        Ok(value)
+    } else {
+        Err(serde::de::Error::custom(
+            "Apple Music broker body exceeded its limit",
+        ))
+    }
+}
+
+impl std::fmt::Debug for ApiResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Tokens")
-            .field("developer_token", &"<redacted>")
-            .field(
-                "music_user_token",
-                &self.music_user_token.as_ref().map(|_| "<redacted>"),
-            )
-            .field("storefront", &self.storefront)
-            .field("authorized", &self.authorized)
+        f.debug_struct("ApiResponse")
+            .field("request_id", &self.request_id)
+            .field("status", &self.status)
+            .field("body_bytes", &self.body.len())
             .finish()
     }
 }
@@ -859,37 +880,50 @@ mod tests {
     }
 
     #[test]
-    fn tokens_never_appear_in_debug_output() {
-        let t = Tokens {
-            developer_token: "eyJhbGciOi.SECRET".into(),
-            music_user_token: Some("ALSO_SECRET".into()),
-            storefront: "gb".into(),
-            authorized: true,
+    fn the_browser_session_contains_no_credentials() {
+        let event = serde_json::from_str::<Event>(
+            r#"{"event":"session","storefront":"gb","authorized":true,"hasUserToken":true}"#,
+        )
+        .unwrap();
+        let Event::Session(session) = event else {
+            panic!("session event parsed as the wrong variant")
         };
-        let shown = format!("{t:?}");
-        assert!(
-            !shown.contains("SECRET"),
-            "token leaked into Debug: {shown}"
-        );
-        assert!(shown.contains("gb"));
+        assert_eq!(session.storefront, "gb");
+        assert!(session.authorized);
+        assert!(session.has_user_token);
     }
 
     #[test]
-    fn malformed_credentials_are_rejected_at_the_protocol_boundary() {
-        let short = r#"{"event":"tokens","developerToken":"short","storefront":"us"}"#;
-        assert!(serde_json::from_str::<Event>(short).is_err());
+    fn malformed_session_and_oversized_broker_data_are_rejected() {
+        let bad_storefront =
+            r#"{"event":"session","storefront":"../","authorized":true,"hasUserToken":true}"#;
+        assert!(serde_json::from_str::<Event>(bad_storefront).is_err());
 
-        let newline = format!(
-            r#"{{"event":"tokens","developerToken":"{}\n{}","storefront":"us"}}"#,
-            "a".repeat(32),
-            "b".repeat(32)
-        );
-        assert!(serde_json::from_str::<Event>(&newline).is_err());
+        let oversized = serde_json::json!({
+            "event": "api-response",
+            "requestId": 1,
+            "status": 200,
+            "body": "x".repeat(MAX_API_BODY_BYTES + 1),
+        });
+        assert!(serde_json::from_value::<Event>(oversized).is_err());
 
-        let bad_storefront = format!(
-            r#"{{"event":"tokens","developerToken":"{}","storefront":"../"}}"#,
-            "a".repeat(64)
-        );
-        assert!(serde_json::from_str::<Event>(&bad_storefront).is_err());
+        let invalid_status = serde_json::json!({
+            "event": "api-response",
+            "requestId": 1,
+            "status": 99,
+            "body": "",
+        });
+        assert!(serde_json::from_value::<Event>(invalid_status).is_err());
+
+        let response = serde_json::from_value::<Event>(serde_json::json!({
+            "event": "api-response",
+            "requestId": 4,
+            "status": 200,
+            "body": "private library data",
+        }))
+        .unwrap();
+        let shown = format!("{response:?}");
+        assert!(!shown.contains("private library data"));
+        assert!(shown.contains("body_bytes"));
     }
 }

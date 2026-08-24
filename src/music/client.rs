@@ -1,21 +1,24 @@
 // SPDX-FileCopyrightText: 2026 Miguel Rincon
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Thin async wrapper over `api.music.apple.com`.
+//! Typed native projection of Apple Music data obtained through the browser.
 //!
-//! Both tokens come from the sidecar (ARCHITECTURE.md rule 7) — the developer token
-//! as a bearer, the Music User Token in `Music-User-Token`. Neither is ever
-//! logged or persisted to the config file.
+//! MusicKit's authenticated in-page client owns the origin, headers, cookies,
+//! developer token and Music User Token. Rust sends a bounded relative path
+//! through the sidecar broker and receives only a status plus JSON body.
 //!
 //! M5 fills in the library and catalog calls. What exists now is the client
 //! itself plus the error diagnosis, because "errors name the fix" is easier to
 //! honour if it's there from the first request rather than retrofitted.
 
 use anyhow::{Context, Result};
-use reqwest::{Client as HttpClient, StatusCode, header};
+use reqwest::StatusCode;
 use std::collections::HashMap;
 
 use serde::Deserialize;
+
+use crate::player::protocol::ApiMethod;
+use crate::player::sidecar::{ApiReply, Broker, BrokerError};
 
 use super::types::{
     Album, AlbumAttributes, AlbumResource, Artist, ArtistAttributes, ArtistPageData,
@@ -35,10 +38,6 @@ pub struct SearchResults {
     pub playlists: Vec<Playlist>,
 }
 
-const API_BASE: &str = "https://api.music.apple.com/v1";
-/// The origin the harvested developer token is minted for — see `get()`.
-const WEB_ORIGIN: &str = "https://music.apple.com";
-const WEB_REFERER: &str = "https://music.apple.com/";
 /// A playlist long enough to hit this is a playlist nobody scrolls. Bounded so
 /// one enormous one cannot spin through fifty requests.
 const PLAYLIST_MAX: usize = 1_000;
@@ -64,13 +63,28 @@ const RECOMMENDATION_GROUPS: usize = 24;
 /// kilobytes; this leaves generous room for recommendations and large pages
 /// while preventing a response (or intermediary) from allocating without a
 /// ceiling before serde sees it.
-const API_BODY_MAX: usize = 16 * 1024 * 1024;
+const API_BODY_MAX: usize = 3 * 1024 * 1024;
 /// Lyrics are one TTML document, not an API collection. A separate ceiling
-/// keeps a compromised or changed endpoint from consuming the general 16 MiB
+/// keeps a compromised or changed endpoint from consuming the general 3 MiB
 /// allowance merely because both responses happen to be JSON.
 const LYRICS_BODY_MAX: usize = 2 * 1024 * 1024;
+/// GETs are safe to repeat, and MusicKit briefly reports a gateway failure
+/// while its authenticated API client finishes starting. Two short retries
+/// cover that hand-off and ordinary CDN blips without turning a real Apple
+/// outage into a request storm.
+const GET_RETRY_DELAYS: [std::time::Duration; 2] = [
+    std::time::Duration::from_millis(300),
+    std::time::Duration::from_millis(900),
+];
 
-async fn bounded_json<T>(res: reqwest::Response, label: &'static str) -> Result<T>
+fn transient_gateway(status: StatusCode) -> bool {
+    matches!(
+        status,
+        StatusCode::BAD_GATEWAY | StatusCode::SERVICE_UNAVAILABLE | StatusCode::GATEWAY_TIMEOUT
+    )
+}
+
+async fn bounded_json<T>(res: BrowserResponse, label: &'static str) -> Result<T>
 where
     T: serde::de::DeserializeOwned,
 {
@@ -78,48 +92,36 @@ where
 }
 
 async fn bounded_json_with_limit<T>(
-    mut res: reqwest::Response,
+    res: BrowserResponse,
     label: &'static str,
     limit: usize,
 ) -> Result<T>
 where
     T: serde::de::DeserializeOwned,
 {
-    if res
-        .content_length()
-        .is_some_and(|length| length > limit as u64)
-    {
+    if res.body.len() > limit {
         anyhow::bail!("Apple Music response exceeded the safe size limit");
     }
-
-    let mut body = Vec::new();
-    while let Some(chunk) = res
-        .chunk()
-        .await
-        // Do not retain reqwest's URL-bearing error: paths can contain private
-        // playlist ids and searches can contain the user's exact query.
-        .map_err(|_| anyhow::anyhow!("Apple Music response could not be read"))?
-    {
-        let Some(next) = body.len().checked_add(chunk.len()) else {
-            anyhow::bail!("Apple Music response exceeded the safe size limit");
-        };
-        if next > limit {
-            anyhow::bail!("Apple Music response exceeded the safe size limit");
-        }
-        body.extend_from_slice(&chunk);
-    }
-
-    serde_json::from_slice(&body).with_context(|| format!("decoding {label}"))
+    serde_json::from_str(&res.body).with_context(|| format!("decoding {label}"))
 }
 
-/// Clone is cheap: `reqwest::Client` is an `Arc` internally, and the tokens are
-/// small strings. Cloning per concurrent page keeps the connection pool shared.
+struct BrowserResponse {
+    status: StatusCode,
+    body: String,
+}
+
+impl BrowserResponse {
+    fn status(&self) -> StatusCode {
+        self.status
+    }
+}
+
+/// Clone is cheap: the broker is an `Arc`-backed request router.
 #[derive(Clone)]
 pub struct Client {
-    http: HttpClient,
-    developer_token: String,
-    music_user_token: Option<String>,
+    broker: Broker,
     storefront: String,
+    authorized: bool,
 }
 
 /// Failures the UI has a distinct response to. Anything else is a toast.
@@ -127,16 +129,14 @@ pub struct Client {
 pub enum ApiError {
     #[error("not signed in to Apple Music")]
     Unauthorized,
-    /// 401 while holding a live user token — the request was rejected, not the
-    /// session. In practice: a missing/wrong `Origin`, or a rotated token.
+    /// 401 while MusicKit reports an authorized session. The browser owns
+    /// recovery; asking the person to sign in again here would be misleading.
     #[error("Apple Music rejected the request (401) despite a valid session")]
     Rejected,
     #[error("no active Apple Music subscription")]
     Forbidden,
     #[error("not found")]
     NotFound,
-    #[error("offline — check your connection")]
-    Offline,
     #[error("Apple Music error ({0})")]
     Other(StatusCode),
 }
@@ -152,25 +152,11 @@ struct LyricsAttributes {
 }
 
 impl Client {
-    pub fn new(
-        developer_token: String,
-        music_user_token: Option<String>,
-        storefront: String,
-    ) -> Self {
+    pub fn new(broker: Broker, storefront: String, authorized: bool) -> Self {
         Self {
-            // Never follow an API redirect while carrying Apple credentials.
-            // `Authorization` is commonly stripped cross-origin, but the
-            // custom `Music-User-Token` header is not guaranteed to be. A
-            // fixed-origin client must fail closed instead of handing it to a
-            // location chosen by a response.
-            http: HttpClient::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .expect("the static rustls HTTP client configuration is valid"),
-            developer_token,
-            music_user_token,
+            broker,
             storefront,
+            authorized,
         }
     }
 
@@ -178,56 +164,37 @@ impl Client {
         &self.storefront
     }
 
-    fn get(&self, path: &str) -> reqwest::RequestBuilder {
-        let req = self
-            .http
-            .get(format!("{API_BASE}{path}"))
-            .bearer_auth(&self.developer_token)
-            // The harvested developer token is ORIGIN-LOCKED. Its JWT payload
-            // carries `"root_https_origin": ["apple.com"]`, and the API
-            // enforces it: without these two headers every request comes back
-            // 401 even with a perfectly valid token and user token. A browser
-            // sets them automatically, which is why this only bites a native
-            // client. Do not remove them.
-            .header("Origin", WEB_ORIGIN)
-            .header("Referer", WEB_REFERER);
-        match &self.music_user_token {
-            Some(t) => req.header("Music-User-Token", t.as_str()),
-            None => req,
+    async fn request(&self, method: ApiMethod, path: &str) -> Result<BrowserResponse, ApiError> {
+        let ApiReply { status, body } = self
+            .broker
+            .request(method, path.to_owned())
+            .await
+            .map_err(Self::transport_error)?;
+        let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
+        Ok(BrowserResponse { status, body })
+    }
+
+    async fn get(&self, path: &str) -> Result<BrowserResponse, ApiError> {
+        let mut retry = 0;
+        loop {
+            let response = self.request(ApiMethod::Get, path).await?;
+            if !transient_gateway(response.status()) || retry == GET_RETRY_DELAYS.len() {
+                return Ok(response);
+            }
+
+            let delay = GET_RETRY_DELAYS[retry];
+            retry += 1;
+            tracing::debug!(
+                status = %response.status(),
+                attempt = retry,
+                "retrying a transient Apple Music GET"
+            );
+            tokio::time::sleep(delay).await;
         }
     }
 
-    /// As [`Client::get`], for the endpoints that write. Same origin-locked
-    /// headers — they are enforced on every method, not just reads — and the
-    /// user token is not optional here: every write is on behalf of a person.
-    fn post(&self, path: &str) -> reqwest::RequestBuilder {
-        let req = self
-            .http
-            .post(format!("{API_BASE}{path}"))
-            .bearer_auth(&self.developer_token)
-            .header("Origin", WEB_ORIGIN)
-            .header("Referer", WEB_REFERER)
-            // Apple rejects a POST with no body outright; an empty JSON object
-            // is the smallest thing it accepts.
-            .header("Content-Length", "0");
-        match &self.music_user_token {
-            Some(t) => req.header("Music-User-Token", t.as_str()),
-            None => req,
-        }
-    }
-
-    /// As [`Client::post`], for the one write that removes something.
-    fn delete(&self, path: &str) -> reqwest::RequestBuilder {
-        let req = self
-            .http
-            .delete(format!("{API_BASE}{path}"))
-            .bearer_auth(&self.developer_token)
-            .header("Origin", WEB_ORIGIN)
-            .header("Referer", WEB_REFERER);
-        match &self.music_user_token {
-            Some(t) => req.header("Music-User-Token", t.as_str()),
-            None => req,
-        }
+    async fn post(&self, path: &str) -> Result<BrowserResponse, ApiError> {
+        self.request(ApiMethod::Post, path).await
     }
 
     /// Map a response status to something the UI can act on.
@@ -247,13 +214,13 @@ impl Client {
     }
 
     fn signed_in(&self) -> bool {
-        self.music_user_token.is_some()
+        self.authorized
     }
 
     /// Turn a failed response into an actionable status without retaining its
     /// body. Even a first-party error response is remote input and can echo
     /// request data; it does not belong in a desktop log or toast.
-    async fn explain(&self, res: reqwest::Response) -> anyhow::Error {
+    async fn explain(&self, res: BrowserResponse) -> anyhow::Error {
         let status = res.status();
         let err = Self::diagnose(status, self.signed_in());
         tracing::warn!(%status, "apple music api error");
@@ -280,9 +247,7 @@ impl Client {
                 "/catalog/{}/songs/{catalog_id}/lyrics",
                 self.storefront
             ))
-            .send()
             .await
-            .map_err(Self::transport_error)
             .context("requesting Apple Music lyrics")?;
 
         if res.status() == StatusCode::NOT_FOUND {
@@ -291,19 +256,6 @@ impl Client {
         if !res.status().is_success() {
             return Err(self.explain(res).await);
         }
-        let content_type = res
-            .headers()
-            .get(header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or_default();
-        if !content_type
-            .split(';')
-            .next()
-            .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("application/json"))
-        {
-            anyhow::bail!("Apple Music returned an unexpected lyrics format");
-        }
-
         let parsed: Response<LyricsResource> =
             bounded_json_with_limit(res, "Apple Music lyrics", LYRICS_BODY_MAX).await?;
         let Some(ttml) = parsed
@@ -407,21 +359,15 @@ impl Client {
     /// nothing may call it and then claim the item is in the library.
     pub async fn add_song_to_library(&self, id: &str) -> Result<()> {
         let id = urlencode(id);
-        self.accepted(
-            self.post(&format!("/me/library?ids[songs]={id}")),
-            "adding to library",
-        )
-        .await
+        self.accepted(format!("/me/library?ids[songs]={id}"), "adding to library")
+            .await
     }
 
     /// Favourite a resource — the star, not the older love/dislike rating.
     pub async fn favorite_song(&self, id: &str) -> Result<()> {
         let id = urlencode(id);
-        self.accepted(
-            self.post(&format!("/me/favorites?ids[songs]={id}")),
-            "favouriting",
-        )
-        .await
+        self.accepted(format!("/me/favorites?ids[songs]={id}"), "favouriting")
+            .await
     }
 
     // There is deliberately no `remove_from_favorites`.
@@ -434,18 +380,14 @@ impl Client {
     //   'Favorites:DELETE:IdsQuery' entities require permissions that are not
     //   in the request
     //
-    // The harvested web-player token does not carry that permission, and there
-    // is no way to ask for it from here. So favouriting is **add-only** in
-    // Slipmat, and the menu does not offer a removal it cannot perform.
+    // The browser broker exposes no arbitrary DELETE. Removal stays on the
+    // dedicated, typed page command that uses MusicKit's verb helper, so this
+    // client cannot accidentally widen its request capability.
 
     /// The shared POST-and-check for both. Neither returns a body worth
     /// parsing; what matters is that Apple accepted it.
-    async fn accepted(&self, request: reqwest::RequestBuilder, what: &'static str) -> Result<()> {
-        let res = request
-            .send()
-            .await
-            .map_err(Self::transport_error)
-            .context(what)?;
+    async fn accepted(&self, path: String, what: &'static str) -> Result<()> {
+        let res = self.post(&path).await.context(what)?;
 
         if !res.status().is_success() {
             return Err(self.explain(res).await);
@@ -536,12 +478,7 @@ impl Client {
     /// One playlist resource, from either id space — the caller supplies the
     /// path and owns the `library` flag, which is the rule everywhere else too.
     async fn playlist_details(&self, path: &str) -> Result<Playlist> {
-        let res = self
-            .get(path)
-            .send()
-            .await
-            .map_err(Self::transport_error)
-            .context("requesting playlist")?;
+        let res = self.get(path).await.context("requesting playlist")?;
 
         if !res.status().is_success() {
             return Err(self.explain(res).await);
@@ -669,9 +606,7 @@ impl Client {
             .get(&format!(
                 "{base}/{kind}?limit={limit}&offset={offset}{extra_query}"
             ))
-            .send()
             .await
-            .map_err(Self::transport_error)
             .context("requesting library page")?;
 
         // A **relationship** past its end 404s with "No related resources"
@@ -729,15 +664,7 @@ impl Client {
                 "/catalog/{}/search?types={types}&limit={limit}&offset={offset}&term={query}",
                 self.storefront
             ))
-            .send()
             .await
-            .map_err(|err| {
-                if err.is_connect() {
-                    ApiError::Offline
-                } else {
-                    ApiError::Other(StatusCode::BAD_GATEWAY)
-                }
-            })
             .context("searching the catalog")?;
 
         if !res.status().is_success() {
@@ -871,9 +798,7 @@ impl Client {
     async fn recommendation_sections(&self) -> Result<Vec<ExploreSection>> {
         let res = self
             .get("/me/recommendations")
-            .send()
             .await
-            .map_err(Self::transport_error)
             .context("requesting recommendations")?;
         if !res.status().is_success() {
             return Err(self.explain(res).await);
@@ -920,9 +845,7 @@ impl Client {
     ) -> Result<Vec<ExploreSection>> {
         let res = self
             .get(path)
-            .send()
             .await
-            .map_err(Self::transport_error)
             .with_context(|| format!("requesting {title}"))?;
         if !res.status().is_success() {
             return Err(self.explain(res).await);
@@ -945,9 +868,7 @@ impl Client {
                 "/catalog/{}/charts?types=songs,albums,playlists&chart=most-played&limit=10",
                 self.storefront
             ))
-            .send()
             .await
-            .map_err(Self::transport_error)
             .context("requesting charts")?;
         if !res.status().is_success() {
             return Err(self.explain(res).await);
@@ -1029,7 +950,6 @@ impl Client {
                     "/catalog/{}/songs?ids={joined}&include=library",
                     self.storefront
                 ))
-                .send()
                 .await;
             let Ok(res) = res else { continue };
             if !res.status().is_success() {
@@ -1092,9 +1012,7 @@ impl Client {
                 "/catalog/{}/songs/{id}?include=albums,artists",
                 self.storefront
             ))
-            .send()
             .await
-            .map_err(Self::transport_error)
             .context("requesting song")?;
 
         if !res.status().is_success() {
@@ -1132,12 +1050,7 @@ impl Client {
     /// Fetch one album resource, whichever collection it lives in. The catalog
     /// and library responses have the same shape; only the URL differs.
     async fn album_resource(&self, path: &str) -> Result<AlbumResource> {
-        let res = self
-            .get(path)
-            .send()
-            .await
-            .map_err(Self::transport_error)
-            .context("requesting album")?;
+        let res = self.get(path).await.context("requesting album")?;
 
         if !res.status().is_success() {
             return Err(self.explain(res).await);
@@ -1173,7 +1086,9 @@ impl Client {
         // artist, exactly as in `all_library_artists`, so the page header
         // matches the tile that opened it.
         let resource = self
-            .artist_resource(&format!("/me/library/artists/{id}?include=albums,catalog"))
+            .artist_resource(&format!(
+                "/me/library/artists/{id}?include=albums,catalog&extend=editorialNotes"
+            ))
             .await?;
         let portrait = resource
             .relationships
@@ -1214,6 +1129,33 @@ impl Client {
             artist.genres = portrait.genres;
             artist.biography = portrait.biography;
         }
+
+        // Apple may omit extended attributes from an included catalog
+        // relationship even when the top-level library request asked for
+        // them. Fetch only the missing biography from the same catalog artist
+        // as a best-effort fallback; the library page itself remains usable if
+        // this optional request fails.
+        if artist.biography.is_empty()
+            && let Some(id) = catalog_id.as_deref()
+        {
+            match self
+                .artist_resource(&catalog_artist_path(
+                    &self.storefront,
+                    &urlencode(id),
+                    false,
+                ))
+                .await
+            {
+                Ok(resource) => {
+                    artist.biography = Artist::from(resource.into_artist()).biography;
+                }
+                Err(_) => tracing::debug!("catalog artist biography was unavailable"),
+            }
+        }
+        if let Some(id) = catalog_id.as_deref() {
+            self.fill_missing_biography(&mut artist, &urlencode(id))
+                .await;
+        }
         let (top_songs, latest_release) = match catalog_id {
             Some(id) => self.artist_extras(&urlencode(&id)).await,
             None => (Vec::new(), albums.first().cloned()),
@@ -1232,9 +1174,7 @@ impl Client {
     async fn library_pageless_albums(&self, path: &str) -> Result<Vec<Album>> {
         let res = self
             .get(path)
-            .send()
             .await
-            .map_err(Self::transport_error)
             .context("requesting library artist albums")?;
 
         if !res.status().is_success() {
@@ -1250,19 +1190,52 @@ impl Client {
     pub async fn artist_albums(&self, id: &str) -> Result<ArtistPageData> {
         let id = urlencode(id);
         let resource = self
-            .artist_resource(&format!(
-                "/catalog/{}/artists/{id}?include=albums",
-                self.storefront
-            ))
+            .artist_resource(&catalog_artist_path(&self.storefront, &id, true))
             .await?;
         let albums = artist_albums_of(&resource);
         let (top_songs, latest_release) = self.artist_extras(&id).await;
+        let mut artist = Artist::from(resource.into_artist());
+        self.fill_missing_biography(&mut artist, &id).await;
         Ok(ArtistPageData {
-            artist: Artist::from(resource.into_artist()),
+            artist,
             top_songs,
             latest_release: latest_release.or_else(|| albums.first().cloned()),
             albums,
         })
+    }
+
+    /// Fill editorial text without changing the page's active storefront.
+    ///
+    /// Apple does not localize every biography, and MusicKit can omit the
+    /// field even when Apple's public artist page has it. Try the US catalog
+    /// through the existing broker first, then make one credential-free,
+    /// bounded request to Apple's public US page if the field is still empty.
+    async fn fill_missing_biography(&self, artist: &mut Artist, encoded_id: &str) {
+        if !artist.biography.is_empty() {
+            return;
+        }
+
+        if !self.storefront.eq_ignore_ascii_case("us") {
+            match self
+                .artist_resource(&catalog_artist_path("us", encoded_id, false))
+                .await
+            {
+                Ok(resource) => {
+                    let english = Artist::from(resource.into_artist()).biography;
+                    if !english.is_empty() {
+                        artist.biography = english;
+                    }
+                }
+                Err(_) => tracing::debug!("English catalog biography was unavailable"),
+            }
+        }
+        if artist.biography.is_empty() {
+            match super::biography::fetch_english(encoded_id).await {
+                Ok(Some(english)) => artist.biography = english,
+                Ok(None) => {}
+                Err(_) => tracing::debug!("public Apple artist biography was unavailable"),
+            }
+        }
     }
 
     async fn artist_extras(&self, encoded_id: &str) -> (Vec<Track>, Option<Album>) {
@@ -1287,9 +1260,7 @@ impl Client {
                 "/catalog/{}/artists/{encoded_id}/view/top-songs?limit=10",
                 self.storefront
             ))
-            .send()
             .await
-            .map_err(Self::transport_error)
             .context("requesting artist top songs")?;
 
         if !res.status().is_success() {
@@ -1307,9 +1278,7 @@ impl Client {
                 "/catalog/{}/artists/{encoded_id}/view/latest-release?limit=1",
                 self.storefront
             ))
-            .send()
             .await
-            .map_err(Self::transport_error)
             .context("requesting artist latest release")?;
 
         if !res.status().is_success() {
@@ -1322,12 +1291,7 @@ impl Client {
 
     /// As [`Client::album_resource`], for artists.
     async fn artist_resource(&self, path: &str) -> Result<ArtistResource> {
-        let res = self
-            .get(path)
-            .send()
-            .await
-            .map_err(Self::transport_error)
-            .context("requesting artist")?;
+        let res = self.get(path).await.context("requesting artist")?;
 
         if !res.status().is_success() {
             return Err(self.explain(res).await);
@@ -1337,11 +1301,12 @@ impl Client {
         parsed.data.into_iter().next().context("artist not found")
     }
 
-    fn transport_error(err: reqwest::Error) -> ApiError {
-        if err.is_connect() {
-            ApiError::Offline
-        } else {
-            ApiError::Other(StatusCode::BAD_GATEWAY)
+    fn transport_error(err: BrokerError) -> ApiError {
+        match err {
+            BrokerError::InvalidRequest => ApiError::Other(StatusCode::BAD_REQUEST),
+            BrokerError::Busy => ApiError::Other(StatusCode::TOO_MANY_REQUESTS),
+            BrokerError::Unavailable => ApiError::Other(StatusCode::SERVICE_UNAVAILABLE),
+            BrokerError::Timeout => ApiError::Other(StatusCode::GATEWAY_TIMEOUT),
         }
     }
 }
@@ -1554,6 +1519,18 @@ fn urlencode(s: &str) -> String {
     out
 }
 
+/// A catalog artist request with Apple's documented editorial-notes extension.
+/// Keeping construction in one place prevents a page from silently regressing
+/// to the biography-free default response.
+fn catalog_artist_path(storefront: &str, encoded_id: &str, include_albums: bool) -> String {
+    let include = if include_albums {
+        "include=albums&"
+    } else {
+        ""
+    };
+    format!("/catalog/{storefront}/artists/{encoded_id}?{include}extend=editorialNotes")
+}
+
 /// The tracks Apple attached to an album via `include=tracks`, or none.
 fn album_tracks(resource: &AlbumResource) -> Vec<Track> {
     resource
@@ -1606,6 +1583,22 @@ mod tests {
     }
 
     #[test]
+    fn artist_page_requests_the_editorial_notes_extension() {
+        assert_eq!(
+            catalog_artist_path("de", "1147783278", true),
+            "/catalog/de/artists/1147783278?include=albums&extend=editorialNotes"
+        );
+        assert_eq!(
+            catalog_artist_path("de", "id%2Fwith%3Fpunctuation", false),
+            "/catalog/de/artists/id%2Fwith%3Fpunctuation?extend=editorialNotes"
+        );
+        assert_eq!(
+            catalog_artist_path("us", "1147783278", false),
+            "/catalog/us/artists/1147783278?extend=editorialNotes"
+        );
+    }
+
+    #[test]
     fn statuses_map_to_errors_that_name_the_fix() {
         assert!(matches!(
             Client::diagnose(StatusCode::UNAUTHORIZED, false),
@@ -1616,6 +1609,26 @@ mod tests {
                 .to_string()
                 .contains("subscription")
         );
+    }
+
+    #[test]
+    fn only_idempotent_gateway_failures_are_retryable() {
+        for status in [
+            StatusCode::BAD_GATEWAY,
+            StatusCode::SERVICE_UNAVAILABLE,
+            StatusCode::GATEWAY_TIMEOUT,
+        ] {
+            assert!(transient_gateway(status));
+        }
+        for status in [
+            StatusCode::UNAUTHORIZED,
+            StatusCode::FORBIDDEN,
+            StatusCode::NOT_FOUND,
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ] {
+            assert!(!transient_gateway(status));
+        }
     }
 
     #[test]

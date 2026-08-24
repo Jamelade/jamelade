@@ -8,8 +8,9 @@
 //! 1.6 exposes it as CSS variables (`--accent-bg-color` and friends) and there
 //! is no API to set an app-specific one, so a provider is the only route.
 //!
-//! Seven providers, deliberately:
+//! Eight providers, deliberately:
 //!
+//! - a **theme** one for an optional named surface palette;
 //! - a **base** one, replaced only when the accent preference changes;
 //! - a **material** one carrying the user-selected transparency;
 //! - a **glass** one carrying two locally-derived album colours;
@@ -26,8 +27,10 @@ use relm4::gtk::{self, gdk};
 
 use crate::companion::Companion;
 use crate::palette::AlbumPalette;
+use crate::settings::Theme;
 
 mod lyrics;
+mod theme;
 pub use lyrics::{
     set_accent_strength as set_lyrics_accent_strength, set_font_scale as set_lyrics_font_scale,
 };
@@ -118,6 +121,8 @@ impl Accent {
 }
 
 thread_local! {
+    /// Named surface palettes. Empty for stock Light, Dark and Follow System.
+    static THEME: gtk::CssProvider = gtk::CssProvider::new();
     static BASE: gtk::CssProvider = gtk::CssProvider::new();
     /// Surface opacity, replaced when the glass slider moves. Separate from the
     /// album palette so dragging it does not reset a colour transition.
@@ -138,7 +143,13 @@ thread_local! {
     /// *what is on screen*. `SHOWN_ART` is what the theme-flip handler repaints
     /// from, so a caller-side gate would put the cover back on the next
     /// light/dark flip with nothing having asked for it.
-    static BACKDROP_ON: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    /// The one saved switch owns both halves of album-aware glass: the cover
+    /// image and its extracted colours. Off, a named theme supplies the glass
+    /// colours instead and no track artwork is painted.
+    static ALBUM_GLASS_ON: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    static ACTIVE_THEME: std::cell::Cell<Theme> = const {
+        std::cell::Cell::new(Theme::Light)
+    };
     /// Persisted 0–100 material strength. Read at backdrop-paint time so theme
     /// flips and cover cross-fades always use the current slider value.
     static GLASS_STRENGTH: std::cell::Cell<u8> = const {
@@ -148,6 +159,7 @@ thread_local! {
 
 /// Install the providers. Called once, before the window is shown.
 pub fn init(
+    theme: Theme,
     accent: Accent,
     companion: Companion,
     backdrop: bool,
@@ -159,6 +171,13 @@ pub fn init(
         // No display means no styling to do, and certainly nothing to fail on.
         return;
     };
+    THEME.with(|p| {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            p,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 5,
+        )
+    });
     BASE.with(|p| {
         gtk::style_context_add_provider_for_display(
             &display,
@@ -197,7 +216,8 @@ pub fn init(
         )
     });
     lyrics::install(&display, lyrics_accent_strength, lyrics_font_scale);
-    BACKDROP_ON.with(|c| c.set(backdrop));
+    ALBUM_GLASS_ON.with(|c| c.set(backdrop));
+    set_theme(theme);
     set_accent(accent, companion);
     set_glass_strength(glass_strength);
 
@@ -207,12 +227,19 @@ pub fn init(
     // Switching to light then left the drawer wearing an 0.86 white veil, which
     // is the washed-out state this pair of numbers exists to avoid.
     //
-    // `SHOWN_ART` already holds what is on screen, so repainting is just
-    // re-emitting the same image through the current theme's numbers.
-    adw::StyleManager::default().connect_dark_notify(|_| {
-        let shown = SHOWN_ART.with(|c| c.borrow().clone());
-        paint_backdrop(shown.as_deref().map(image_of));
-    });
+    // The shown paths already hold what is on screen, so repainting is just
+    // re-emitting the same images through the current theme's numbers.
+    adw::StyleManager::default().connect_dark_notify(|_| repaint_shown_backdrop());
+}
+
+/// Apply a full-window surface palette without changing the independent accent
+/// preference. Stock Light, Dark and Follow System deliberately clear it.
+pub fn set_theme(theme: Theme) {
+    ACTIVE_THEME.with(|active| active.set(theme));
+    THEME.with(|provider| provider.load_from_string(&theme::css(theme)));
+    refresh_album_palette();
+    repaint_shown_backdrop();
+    refresh_adaptive_text();
 }
 
 /// How the cover is laid out on each surface. Static, so it lives here rather
@@ -240,9 +267,11 @@ const COVER_LAYOUT: &str = ".jamelade-window { background-size: cover, cover, co
          .np-sheet { background-size: cover, 150% 150%; }
          .np-bar, .np-sheet { background-position: center, center; }";
 
-/// Follow the desktop's normal interface font without selecting or bundling a
-/// vendor-specific typeface.
-const UI_FONT_STACK: &str = "system-ui, sans-serif";
+/// Prefer SF Pro Display only when the user has installed it locally. Jamelade
+/// neither bundles nor redistributes Apple's font. `system-ui` is deliberately
+/// next, so a machine without it gets its desktop's own UI face rather than a
+/// font the app happens to prefer.
+const UI_FONT_STACK: &str = "\"SF Pro Display\", system-ui, sans-serif";
 
 /// Apply an accent, and the handful of rules that go with it.
 pub fn set_accent(accent: Accent, companion: Companion) {
@@ -255,6 +284,7 @@ pub fn set_accent(accent: Accent, companion: Companion) {
                  --jam-secondary-color: {secondary};
                  --glass-primary-color: {bg};
                  --glass-secondary-color: {secondary};
+                 --jamelade-headerbar-color: @headerbar_bg_color;
                  --art-fg-color: @window_fg_color;
                  --art-shadow-color: @window_bg_color;
              }}"
@@ -263,6 +293,7 @@ pub fn set_accent(accent: Accent, companion: Companion) {
                      --jam-secondary-color: #d99a28;
                      --glass-primary-color: var(--accent-bg-color);
                      --glass-secondary-color: #d99a28;
+                     --jamelade-headerbar-color: @headerbar_bg_color;
                      --art-fg-color: @window_fg_color;
                      --art-shadow-color: @window_bg_color;
                  }"
@@ -275,7 +306,19 @@ pub fn set_accent(accent: Accent, companion: Companion) {
     let css = format!(
         "{accent_rules}
          .favorite-star {{ color: #f5c211; }}
-         .player-metadata-link {{ color: var(--accent-color); }}
+         .player-metadata-link {{
+             color: var(--accent-color);
+             min-height: 0;
+             padding: 2px 8px;
+             border-radius: 9999px;
+             transition: 150ms ease;
+         }}
+         .player-metadata-link:hover {{
+             background-color: alpha(var(--accent-color), 0.10);
+         }}
+         .player-metadata-link:focus-visible {{
+             box-shadow: inset 0 0 0 2px alpha(var(--accent-color), 0.42);
+         }}
 
          /* A restrained liquid-glass material. GTK has no backdrop-filter or
             iOS-style refraction shader, so the depth comes from translucent
@@ -296,7 +339,7 @@ pub fn set_accent(accent: Accent, companion: Companion) {
              );
          }}
          .jamelade-window headerbar {{
-             background-color: alpha(@window_bg_color, 0.78);
+             background-color: alpha(var(--jamelade-headerbar-color), 0.78);
              background-image: linear-gradient(
                  180deg,
                  alpha(#ffffff, 0.12),
@@ -469,6 +512,24 @@ pub fn set_accent(accent: Accent, companion: Companion) {
                  0 9px 24px alpha(#000000, 0.10);
          }}
 
+         .player-cover-link {{
+             padding: 0;
+             min-width: 0;
+             min-height: 0;
+             border-radius: 16px;
+             transition: 150ms ease;
+         }}
+         .player-cover-link:hover {{
+             box-shadow:
+                 inset 0 0 0 1px alpha(#ffffff, 0.22),
+                 0 12px 30px alpha(#000000, 0.22);
+         }}
+         .player-cover-link:focus-visible {{
+             box-shadow:
+                 inset 0 0 0 2px alpha(var(--accent-color), 0.72),
+                 0 12px 30px alpha(#000000, 0.18);
+         }}
+
          /* The bar's progress line. Thin, square, and edge to edge — it reads
             as the bar filling up rather than as a widget sitting on it, which
             is the whole reason it stopped being a scale.
@@ -551,6 +612,25 @@ pub fn set_accent(accent: Accent, companion: Companion) {
                      alpha(var(--glass-primary-color), 0.20),
                      alpha(var(--glass-secondary-color), 0.09)
                  );
+         }}
+         .artist-biography-toggle {{
+             min-height: 0;
+             padding: 5px 0;
+             border-radius: 10px;
+         }}
+         .artist-biography-toggle:hover {{
+             color: var(--accent-color);
+             background-color: alpha(var(--accent-color), 0.075);
+         }}
+         .artist-biography-toggle:focus-visible {{
+             box-shadow: inset 0 0 0 2px alpha(var(--accent-color), 0.40);
+         }}
+         .artist-biography-preview {{
+             opacity: 0.78;
+         }}
+         .artist-biography-full {{
+             padding-top: 15px;
+             border-top: 1px solid alpha(currentColor, 0.11);
          }}
          .explore-kicker {{
              color: var(--accent-color);
@@ -732,7 +812,7 @@ fn material_css(strength: u8) -> String {
     };
     format!(
         ".jamelade-window headerbar {{
-             background-color: alpha(@window_bg_color, {:.3});
+             background-color: alpha(var(--jamelade-headerbar-color), {:.3});
              {clear_fill}
          }}
          .jam-glass-sidebar {{
@@ -760,8 +840,7 @@ pub fn set_glass_strength(strength: u8) {
     MATERIAL.with(|provider| provider.load_from_string(&material_css(strength)));
 
     // The same cover, with a thinner or heavier legibility veil.
-    let shown = SHOWN_ART.with(|art| art.borrow().clone());
-    paint_backdrop(shown.as_deref().map(image_of));
+    repaint_shown_backdrop();
     refresh_adaptive_text();
 }
 
@@ -769,6 +848,10 @@ thread_local! {
     /// The cover currently behind the window, so the next one has something to
     /// fade *from*.
     static SHOWN_ART: std::cell::RefCell<Option<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+    /// The permanently softened variant used by the bottom player. Usually the
+    /// same path as `SHOWN_ART`; distinct near the clear-art endpoint.
+    static SHOWN_BAR_ART: std::cell::RefCell<Option<std::path::PathBuf>> =
         const { std::cell::RefCell::new(None) };
     /// Album colours actually painted in the current frame. Unlike the cover
     /// path this advances through every interpolated value, so rapidly skipping
@@ -794,6 +877,23 @@ fn cancel_visual_fade() {
     });
 }
 
+fn transition_image(
+    from: &Option<std::path::PathBuf>,
+    to: &Option<std::path::PathBuf>,
+    fading: bool,
+    percent: f32,
+) -> Option<String> {
+    if let (true, Some(from), Some(to)) = (fading, from.as_ref(), to.as_ref()) {
+        Some(format!(
+            "cross-fade({percent}% {}, {})",
+            image_of(to),
+            image_of(from)
+        ))
+    } else {
+        to.as_deref().map(image_of)
+    }
+}
+
 /// Put a cover behind the window and its colours through the glass surfaces,
 /// or take both away.
 ///
@@ -807,27 +907,37 @@ fn cancel_visual_fade() {
 /// The two extracted colours do not replace the Jamkin accent: they tint only
 /// the translucent material. Names and controls therefore keep their chosen
 /// identity and contrast while the surrounding atmosphere follows the album.
-pub fn set_track_visuals(path: Option<&std::path::Path>, palette: Option<AlbumPalette>) {
+pub fn set_track_visuals(
+    path: Option<&std::path::Path>,
+    bar_path: Option<&std::path::Path>,
+    palette: Option<AlbumPalette>,
+) {
     // Whatever was in flight is now heading for the wrong cover and colours.
     cancel_visual_fade();
 
     let from = SHOWN_ART.with(|c| c.borrow().clone());
     let to = path.map(std::path::Path::to_path_buf);
     SHOWN_ART.with(|c| *c.borrow_mut() = to.clone());
+    let from_bar = SHOWN_BAR_ART.with(|c| c.borrow().clone());
+    let to_bar = bar_path.map(std::path::Path::to_path_buf);
+    SHOWN_BAR_ART.with(|c| *c.borrow_mut() = to_bar.clone());
     let from_palette = SHOWN_PALETTE.with(std::cell::Cell::get);
 
-    let fade_art = BACKDROP_ON.with(std::cell::Cell::get)
-        && matches!((&from, &to), (Some(from), Some(to)) if from != to);
-    let fade_palette = matches!((from_palette, palette), (Some(from), Some(to)) if from != to);
-    if !fade_art && !fade_palette {
+    let album_glass = ALBUM_GLASS_ON.with(std::cell::Cell::get);
+    let fade_art = album_glass && matches!((&from, &to), (Some(from), Some(to)) if from != to);
+    let fade_bar =
+        album_glass && matches!((&from_bar, &to_bar), (Some(from), Some(to)) if from != to);
+    let fade_palette =
+        album_glass && matches!((from_palette, palette), (Some(from), Some(to)) if from != to);
+    if !fade_art && !fade_bar && !fade_palette {
         // First cover, same cover, playback stopping, or no usable palette.
         // There is no pair to interpolate, so land on the honest state now.
-        paint_backdrop(to.as_deref().map(image_of));
+        paint_backdrop(to.as_deref().map(image_of), to_bar.as_deref().map(image_of));
         paint_album_palette(palette);
         return;
     }
-    if !fade_art {
-        paint_backdrop(to.as_deref().map(image_of));
+    if !fade_art && !fade_bar {
+        paint_backdrop(to.as_deref().map(image_of), to_bar.as_deref().map(image_of));
     }
     if !fade_palette {
         paint_album_palette(palette);
@@ -844,7 +954,7 @@ pub fn set_track_visuals(path: Option<&std::path::Path>, palette: Option<AlbumPa
             // the settled state is one image and one url — and so a wrong guess
             // about which way `cross-fade` reads its percentage could only ever
             // be a fade in the wrong direction, never a wrong final frame.
-            paint_backdrop(to.as_deref().map(image_of));
+            paint_backdrop(to.as_deref().map(image_of), to_bar.as_deref().map(image_of));
             paint_album_palette(palette);
             // Cleared here, not by the canceller: removing an already-finished
             // source logs a GLib critical.
@@ -852,20 +962,12 @@ pub fn set_track_visuals(path: Option<&std::path::Path>, palette: Option<AlbumPa
             return gtk::glib::ControlFlow::Break;
         }
         let eased = ease(t);
-        if fade_art {
-            // `fade_art` is true only for this exact pair. Keeping the match
-            // local makes that invariant explicit without an `unwrap` in a UI
-            // timer.
-            let (Some(from), Some(to)) = (from.as_ref(), to.as_ref()) else {
-                VISUAL_FADE.with(|f| *f.borrow_mut() = None);
-                return gtk::glib::ControlFlow::Break;
-            };
+        if fade_art || fade_bar {
             let pct = (eased * 100.0).round();
-            paint_backdrop(Some(format!(
-                "cross-fade({pct}% {}, {})",
-                image_of(to),
-                image_of(from)
-            )));
+            paint_backdrop(
+                transition_image(&from, &to, fade_art, pct),
+                transition_image(&from_bar, &to_bar, fade_bar, pct),
+            );
         }
         if fade_palette && let (Some(from), Some(to)) = (from_palette, palette) {
             paint_album_palette(Some(from.interpolate(to, eased)));
@@ -878,33 +980,52 @@ pub fn set_track_visuals(path: Option<&std::path::Path>, palette: Option<AlbumPa
 /// Replace only the blurred copy of the current cover. Used when the glass
 /// slider crosses into a new blur radius; album-derived colours stay exactly
 /// where their own transition left them.
-pub fn set_backdrop_art(path: Option<&std::path::Path>) {
+pub fn set_backdrop_art(path: Option<&std::path::Path>, bar_path: Option<&std::path::Path>) {
     cancel_visual_fade();
     let path = path.map(std::path::Path::to_path_buf);
+    let bar_path = bar_path.map(std::path::Path::to_path_buf);
     SHOWN_ART.with(|shown| *shown.borrow_mut() = path.clone());
-    paint_backdrop(path.as_deref().map(image_of));
+    SHOWN_BAR_ART.with(|shown| *shown.borrow_mut() = bar_path.clone());
+    paint_backdrop(
+        path.as_deref().map(image_of),
+        bar_path.as_deref().map(image_of),
+    );
     refresh_adaptive_text();
 }
 
-/// Override only the two glass variables. Removing the override reveals the
-/// Jamkin fallback declared by `BASE`, so missing art never leaves stale album
-/// colours behind.
+/// Remember the current album palette, then paint either it or the selected
+/// theme's own glass colours according to the single Album Liquid Glass switch.
 fn paint_album_palette(palette: Option<AlbumPalette>) {
     SHOWN_PALETTE.with(|shown| shown.set(palette));
-    let css = palette
-        .map(|palette| {
+    refresh_album_palette();
+    refresh_adaptive_text();
+}
+
+fn refresh_album_palette() {
+    let album_glass = ALBUM_GLASS_ON.with(std::cell::Cell::get);
+    let palette = SHOWN_PALETTE.with(std::cell::Cell::get);
+    let theme = ACTIVE_THEME.with(std::cell::Cell::get);
+    let css = glass_override_css(album_glass, palette, theme);
+    GLASS.with(|provider| provider.load_from_string(&css));
+}
+
+fn glass_override_css(album_glass: bool, palette: Option<AlbumPalette>, theme: Theme) -> String {
+    let colors = if album_glass {
+        palette.map(|palette| (palette.primary.css(), palette.secondary.css()))
+    } else {
+        theme::glass_colors(theme)
+            .map(|(primary, secondary)| (primary.to_owned(), secondary.to_owned()))
+    };
+    colors
+        .map(|(primary, secondary)| {
             format!(
                 ":root {{
-                     --glass-primary-color: {};
-                     --glass-secondary-color: {};
-                 }}",
-                palette.primary.css(),
-                palette.secondary.css(),
+                     --glass-primary-color: {primary};
+                     --glass-secondary-color: {secondary};
+                 }}"
             )
         })
-        .unwrap_or_default();
-    GLASS.with(|provider| provider.load_from_string(&css));
-    refresh_adaptive_text();
+        .unwrap_or_default()
 }
 
 fn adaptive_text_css(palette: AlbumPalette, blend: f32) -> String {
@@ -958,7 +1079,7 @@ fn refresh_adaptive_text() {
     let strength = GLASS_STRENGTH.with(std::cell::Cell::get);
     let blend = adaptive_text_blend(strength);
     let clear_art = blend > 0.0
-        && BACKDROP_ON.with(std::cell::Cell::get)
+        && ALBUM_GLASS_ON.with(std::cell::Cell::get)
         && SHOWN_ART.with(|art| art.borrow().is_some());
     let css = clear_art
         .then(|| SHOWN_PALETTE.with(std::cell::Cell::get))
@@ -1052,19 +1173,20 @@ fn veil(dark: bool, strength: u8) -> Veil {
     }
 }
 
-fn backdrop_css(image: Option<&str>, dark: bool, strength: u8) -> String {
+fn backdrop_css(image: Option<&str>, bar_image: Option<&str>, dark: bool, strength: u8) -> String {
     let Some(image) = image else {
         return ".np-bar, .np-sheet { background-image: none; }".into();
     };
+    let bar_image = bar_image.unwrap_or(image);
     let veil = veil(dark, strength);
-    let layers = |(top, bottom): (f32, f32)| {
+    let layers = |(top, bottom): (f32, f32), layer_image: &str| {
         format!(
             "background-image:
                  linear-gradient(
                      alpha(@window_bg_color, {top}),
                      alpha(@window_bg_color, {bottom})
                  ),
-                 {image};
+                 {layer_image};
              background-repeat: no-repeat;"
         )
     };
@@ -1099,8 +1221,8 @@ fn backdrop_css(image: Option<&str>, dark: bool, strength: u8) -> String {
         ".jamelade-window {{ {window} }}
          .np-bar {{ {} }}
          .np-sheet {{ {} }}",
-        layers(veil.bar),
-        layers(veil.sheet)
+        layers(veil.bar, bar_image),
+        layers(veil.sheet, image)
     )
 }
 
@@ -1113,25 +1235,40 @@ fn painting_dark() -> bool {
     adw::StyleManager::default().is_dark()
 }
 
-/// Show the cover behind the whole window, or stop showing it (#145). Live, from
-/// Preferences — the same surfaces and the same provider, so turning it back on
-/// picks up the track that is playing now rather than the one that was.
+/// Let the current album own the cover and glass palette, or give both back to
+/// the selected theme. Live from Preferences; the stored paths and palette mean
+/// turning it back on needs no track change.
 pub fn set_backdrop_enabled(on: bool) {
-    BACKDROP_ON.with(|c| c.set(on));
+    ALBUM_GLASS_ON.with(|c| c.set(on));
     // Snapped, not faded. Fading a preference would say the app was thinking
     // about it; a switch should land the moment it is flipped.
-    let shown = SHOWN_ART.with(|c| c.borrow().clone());
-    paint_backdrop(shown.as_deref().map(image_of));
+    refresh_album_palette();
+    repaint_shown_backdrop();
     refresh_adaptive_text();
 }
 
-fn paint_backdrop(image: Option<String>) {
+fn repaint_shown_backdrop() {
+    let image = SHOWN_ART.with(|shown| shown.borrow().clone());
+    let bar_image = SHOWN_BAR_ART.with(|shown| shown.borrow().clone());
+    paint_backdrop(
+        image.as_deref().map(image_of),
+        bar_image.as_deref().map(image_of),
+    );
+}
+
+fn paint_backdrop(image: Option<String>, bar_image: Option<String>) {
     // The one place every path funnels through — a track change, the fade's
     // per-frame repaint, the theme-flip handler — so the preference holds by
     // construction rather than at three call sites that could each forget it.
-    let image = image.filter(|_| BACKDROP_ON.with(std::cell::Cell::get));
+    let image = image.filter(|_| ALBUM_GLASS_ON.with(std::cell::Cell::get));
+    let bar_image = bar_image.filter(|_| ALBUM_GLASS_ON.with(std::cell::Cell::get));
     let strength = GLASS_STRENGTH.with(std::cell::Cell::get);
-    let css = backdrop_css(image.as_deref(), painting_dark(), strength);
+    let css = backdrop_css(
+        image.as_deref(),
+        bar_image.as_deref(),
+        painting_dark(),
+        strength,
+    );
     BACKDROP.with(|p| p.load_from_string(&css));
 }
 
@@ -1194,7 +1331,7 @@ mod tests {
         // that animation's keyframes: the CSS default is the top-left corner.
         let css = format!(
             "{COVER_LAYOUT}{}",
-            backdrop_css(Some("url(\"file:///tmp/x.png\")"), true, 70)
+            backdrop_css(Some("url(\"file:///tmp/x.png\")"), None, true, 70)
         );
         assert!(
             !css.contains("animation") && !css.contains("keyframes"),
@@ -1205,7 +1342,7 @@ mod tests {
 
     #[test]
     fn the_window_and_both_player_surfaces_get_the_cover() {
-        let css = backdrop_css(Some("url(\"file:///tmp/x.png\")"), true, 70);
+        let css = backdrop_css(Some("url(\"file:///tmp/x.png\")"), None, true, 70);
         assert!(
             css.contains(".jamelade-window"),
             "the main content was left out: {css}"
@@ -1219,7 +1356,7 @@ mod tests {
         );
         // Clearing has to reach both player surfaces. The window rule disappears
         // entirely so BASE's quiet Jamkin gradients become visible again.
-        let cleared = backdrop_css(None, true, 70);
+        let cleared = backdrop_css(None, None, true, 70);
         assert!(cleared.contains(".np-bar") && cleared.contains(".np-sheet"));
         assert!(!cleared.contains(".jamelade-window"));
     }
@@ -1240,8 +1377,8 @@ mod tests {
         // `@window_bg_color`, so 0.86 leaves the cover 14% either way — and 14%
         // of a photograph reads as a coloured glow over a dark window and as
         // pastel mush over a near-white one.
-        let dark = backdrop_css(Some("url(\"a\")"), true, 70);
-        let light = backdrop_css(Some("url(\"a\")"), false, 70);
+        let dark = backdrop_css(Some("url(\"a\")"), None, true, 70);
+        let light = backdrop_css(Some("url(\"a\")"), None, false, 70);
         assert_ne!(dark, light, "both themes got the same veil");
 
         let dark = veil(true, 70);
@@ -1274,6 +1411,29 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn named_theme_owns_glass_and_header_when_album_glass_is_off() {
+        let album = AlbumPalette {
+            primary: crate::palette::Rgb { r: 1, g: 2, b: 3 },
+            secondary: crate::palette::Rgb { r: 4, g: 5, b: 6 },
+        };
+        let on = glass_override_css(true, Some(album), Theme::Periwinkle);
+        assert!(on.contains(&album.primary.css()));
+
+        let off = glass_override_css(false, Some(album), Theme::Periwinkle);
+        assert!(off.contains("#7c83c9"));
+        assert!(off.contains("#ac8ad1"));
+        assert!(!off.contains(&album.primary.css()));
+        assert!(glass_override_css(false, Some(album), Theme::Light).is_empty());
+
+        let material = material_css(70);
+        assert!(material.contains("var(--jamelade-headerbar-color)"));
+        assert!(
+            !material
+                .contains("headerbar {\n             background-color: alpha(@window_bg_color")
+        );
     }
 
     #[test]
@@ -1312,10 +1472,29 @@ mod tests {
             assert_eq!(veil.sheet, (0.0, 0.0));
         }
         assert!(material_css(100).contains("background-image: none"));
-        let backdrop = backdrop_css(Some("url(\"cover\")"), true, 100);
+        let backdrop = backdrop_css(Some("url(\"cover\")"), None, true, 100);
         assert_eq!(backdrop.matches("url(\"cover\")").count(), 3);
         assert!(!backdrop.contains("--glass-primary-color"));
         assert!(!backdrop.contains("--glass-secondary-color"));
+    }
+
+    #[test]
+    fn the_clear_window_keeps_a_separate_blurred_bar_image() {
+        let backdrop = backdrop_css(
+            Some("url(\"clear-cover\")"),
+            Some("url(\"blurred-cover\")"),
+            true,
+            100,
+        );
+        assert_eq!(backdrop.matches("url(\"clear-cover\")").count(), 2);
+        assert_eq!(backdrop.matches("url(\"blurred-cover\")").count(), 1);
+        let bar = backdrop
+            .split(".np-bar")
+            .nth(1)
+            .and_then(|css| css.split(".np-sheet").next())
+            .expect("bar rule");
+        assert!(bar.contains("url(\"blurred-cover\")"));
+        assert!(!bar.contains("url(\"clear-cover\")"));
     }
 
     #[test]
@@ -1380,8 +1559,9 @@ mod tests {
     }
 
     #[test]
-    fn the_ui_font_follows_the_desktop() {
-        assert!(UI_FONT_STACK.starts_with("system-ui"));
+    fn sf_pro_is_the_preferred_ui_font_with_linux_fallbacks() {
+        assert!(UI_FONT_STACK.starts_with("\"SF Pro Display\""));
+        assert!(UI_FONT_STACK.contains("system-ui"));
         assert!(UI_FONT_STACK.ends_with("sans-serif"));
     }
 

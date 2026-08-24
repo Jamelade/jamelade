@@ -13,6 +13,7 @@ const source = fs.readFileSync(path.join(__dirname, 'page-hook.js'), 'utf8')
 
 function harness() {
   const events = []
+  const apiRequests = []
   const windowListeners = new Map()
   const musicListeners = new Map()
   const music = {
@@ -32,6 +33,18 @@ function harness() {
       musicListeners.set(name, callback)
     },
     async setQueue() {},
+    api: {
+      v3: {
+        async music(path) {
+          apiRequests.push({ method: 'get', path })
+          return { status: 200, data: { data: [{ id: '123', type: 'albums' }] } }
+        },
+      },
+      async post(path) {
+        apiRequests.push({ method: 'post', path })
+        return { status: 202, data: null }
+      },
+    },
   }
   const location = {
     origin: 'https://music.apple.com',
@@ -59,10 +72,13 @@ function harness() {
     document: { readyState: 'complete' },
     setTimeout,
     clearTimeout,
+    TextEncoder,
+    URL,
   }))
 
   return {
     events,
+    apiRequests,
     music,
     musicListeners,
     send(command) {
@@ -79,10 +95,68 @@ function harness() {
   }
 }
 
+test('the browser broker permits named Apple routes and refuses arbitrary URLs', async () => {
+  const app = harness()
+  app.send({ cmd: 'apiRequest', requestId: 7, method: 'get', path: '/catalog/de/albums/123?include=tracks' })
+  app.send({ cmd: 'apiRequest', requestId: 9, method: 'get', path: '/catalog/de/artists/1147783278?include=albums&extend=editorialNotes' })
+  app.send({ cmd: 'apiRequest', requestId: 8, method: 'get', path: '//example.com/collect' })
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.deepEqual(app.apiRequests, [
+    {
+      method: 'get',
+      path: '/v1/catalog/de/albums/123?include=tracks',
+    },
+    {
+      method: 'get',
+      path: '/v1/catalog/de/artists/1147783278?include=albums&extend=editorialNotes',
+    },
+  ])
+  const accepted = app.events.find((event) => event.event === 'api-response' && event.requestId === 7)
+  assert.equal(accepted.status, 200)
+  assert.deepEqual(JSON.parse(accepted.body), { data: [{ id: '123', type: 'albums' }] })
+  const refused = app.events.find((event) => event.event === 'api-response' && event.requestId === 8)
+  assert.equal(refused.status, 400)
+})
+
+test('the browser broker waits for MusicKit API startup instead of failing the library', async () => {
+  const app = harness()
+  const music = app.music.api.v3.music
+  delete app.music.api.v3.music
+
+  app.send({
+    cmd: 'apiRequest',
+    requestId: 10,
+    method: 'get',
+    path: '/me/library/songs?limit=100&offset=0',
+  })
+  setTimeout(() => {
+    app.music.api.v3.music = music
+  }, 40)
+  await new Promise((resolve) => setTimeout(resolve, 180))
+
+  assert.deepEqual(app.apiRequests, [{
+    method: 'get',
+    path: '/v1/me/library/songs?limit=100&offset=0',
+  }])
+  const response = app.events.find(
+    (event) => event.event === 'api-response' && event.requestId === 10,
+  )
+  assert.equal(response.status, 200)
+})
+
 test('the signed-in account storefront wins over the page storefront', () => {
   const { events, music } = harness()
   assert.equal(music.storefrontId, 'de')
-  assert.equal(events.find((event) => event.event === 'tokens').storefront, 'de')
+  const session = events.find((event) => event.event === 'session')
+  assert.deepEqual(session, {
+    event: 'session',
+    storefront: 'de',
+    authorized: true,
+    hasUserToken: true,
+  })
+  assert.equal('developerToken' in session, false)
+  assert.equal('musicUserToken' in session, false)
 })
 
 test('a storefront arriving after cookie reflection is re-harvested', () => {
@@ -91,7 +165,7 @@ test('a storefront arriving after cookie reflection is re-harvested', () => {
   musicListeners.get('storefrontCountryCodeDidChange')()
 
   assert.equal(music.storefrontId, 'fr')
-  assert.equal(events.filter((event) => event.event === 'tokens').at(-1).storefront, 'fr')
+  assert.equal(events.filter((event) => event.event === 'session').at(-1).storefront, 'fr')
 })
 
 test('completed auth reflection requests one credential-free player refresh', () => {

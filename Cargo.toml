@@ -1,12 +1,18 @@
 [package]
 name = "jamelade"
-version = "0.10.0-beta.1"
+version = "1.0.0"
 edition = "2024"
 description = "A native Linux desktop client for Apple Music"
 license = "GPL-3.0-or-later"
 readme = "README.md"
 homepage = "https://github.com/Jamelade/jamelade"
 repository = "https://github.com/Jamelade/jamelade"
+
+[features]
+default = []
+# Parallel-installable evaluation profile for the hardened browser broker.
+# This changes only local application identities and storage roots.
+broker-test = []
 
 [dependencies]
 anyhow = "1"
@@ -46,7 +52,7 @@ xml-rs = "0.8"
 # relm4 owns the tokio runtime and runs our commands on it. We need `process`
 # and `io-util` directly: the sidecar is a long-lived child whose stdout we read
 # line by line, which is the one thing Pitwall never had to do.
-tokio = { version = "1", features = ["rt-multi-thread", "process", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "process", "io-util", "sync", "time"] }
 
 # Track durations and the position clock.
 thiserror = "2"

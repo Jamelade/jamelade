@@ -34,6 +34,17 @@ release-repo/
 dist/
 .jamelade-repro-*/
 .flatpak-builder/
+.broker-test-build/
+.broker-test-repo/
+.stable-promotion-build/
+.stable-promotion-repo/
+.stable-verify-build/
+.stable-verify-repo/
+.audit-cargo-home/
+.audit-target/
+.audit-tools/
+.payload-audit/
+.test-pkgconfig/
 
 # fetched on demand by packaging/flatpak/generate-sources.sh
 packaging/flatpak/.flatpak-cargo-generator.py

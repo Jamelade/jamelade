@@ -5,13 +5,30 @@
 
 const MAX_URL_LENGTH = 4096
 const MAX_PROTOCOL_BYTES = 4 * 1024 * 1024
-const MAX_TOKEN_LENGTH = 16 * 1024
+const MAX_API_BODY_BYTES = 3 * 1024 * 1024
 const MAX_ERROR_LENGTH = 512
 const MAX_EVENT_STRING = 4096
 const MAX_EVENT_DEPTH = 8
 const MAX_EVENT_NODES = 50_000
 const MAX_EVENT_ARRAY = 4096
 const MAX_EVENT_KEYS = 256
+
+const STABLE_IDENTITY = Object.freeze({
+  appName: 'Jamelade',
+  profileName: 'Jamelade',
+  desktopName: 'io.github.Jamelade.Jamelade.Launcher.desktop',
+  partition: 'jamelade-hardened-memory',
+})
+const BROKER_TEST_IDENTITY = Object.freeze({
+  appName: 'Jamelade Broker Test',
+  profileName: 'JameladeBrokerTest',
+  desktopName: 'io.github.Jamelade.Jamelade.BrokerTest.Launcher.desktop',
+  partition: 'jamelade-broker-test-memory',
+})
+
+function runtimeIdentity(value) {
+  return value === 'broker-test' ? BROKER_TEST_IDENTITY : STABLE_IDENTITY
+}
 
 // Remote content runs with access to Apple credentials.  Flatpak can grant or
 // deny networking but cannot express a hostname allowlist, so the Electron
@@ -33,6 +50,7 @@ const APPLE_NETWORK_DOMAINS = Object.freeze([
 ])
 
 const RENDERER_EVENTS = new Set([
+  'api-response',
   'authorization',
   'authorization-reflected',
   'cmd-done',
@@ -48,9 +66,39 @@ const RENDERER_EVENTS = new Set([
   'playbackState',
   'position',
   'queue',
-  'tokens',
+  'session',
   'volume',
 ])
+
+// Keep this in lockstep with preload.js. The main process repeats the check so
+// a preload regression cannot turn ignored JSON fields into a covert path from
+// the credential-bearing page to native code.
+const RENDERER_EVENT_KEYS = Object.freeze({
+  'api-response': ['body', 'event', 'requestId', 'status'],
+  authorization: ['authorized', 'event'],
+  'authorization-reflected': ['authorized', 'event'],
+  'cmd-done': ['cmd', 'event', 'queueLen', 'state'],
+  'cmd-recv': ['cmd', 'event'],
+  error: ['code', 'detail', 'event'],
+  'hook-boot': ['event', 'readyState'],
+  'hook-failed': ['detail', 'event'],
+  'hook-ready': ['authorized', 'event', 'trigger', 'version'],
+  'hook-warning': ['detail', 'event'],
+  'library-write': ['detail', 'event', 'id', 'kind', 'ok'],
+  modes: ['event', 'repeat', 'shuffle'],
+  nowPlaying: ['event', 'item', 'queue'],
+  playbackState: ['event', 'state'],
+  position: ['durationMs', 'event', 'positionMs'],
+  queue: ['event', 'items', 'position', 'reason'],
+  session: ['authorized', 'event', 'hasUserToken', 'storefront'],
+  volume: ['event', 'volume'],
+})
+
+function hasExactKeys(value, expected) {
+  const actual = Object.keys(value).sort()
+  return actual.length === expected.length
+    && actual.every((key, index) => key === expected[index])
+}
 
 function hasDomainBoundary(hostname, domain) {
   return hostname === domain || hostname.endsWith(`.${domain}`)
@@ -98,14 +146,6 @@ function serializedSize(value) {
   }
 }
 
-function validToken(value, minimum) {
-  return typeof value === 'string'
-    && value.length >= minimum
-    && value.length <= MAX_TOKEN_LENGTH
-    && value === value.trim()
-    && !/[\r\n]/.test(value)
-}
-
 function isPlainObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const prototype = Object.getPrototypeOf(value)
@@ -142,21 +182,33 @@ function isBoundedJson(
  */
 function isAllowedRendererEvent(value) {
   if (!isPlainObject(value)
-    || !isBoundedJson(value, value.event === 'tokens' ? MAX_TOKEN_LENGTH : MAX_EVENT_STRING)) {
+    || !isBoundedJson(
+      value,
+      value.event === 'api-response' ? MAX_API_BODY_BYTES : MAX_EVENT_STRING,
+    )) {
     return false
   }
   if (!RENDERER_EVENTS.has(value.event)) return false
+  if (!hasExactKeys(value, RENDERER_EVENT_KEYS[value.event])) return false
   if (serializedSize(value) > MAX_PROTOCOL_BYTES) return false
 
-  if (value.event === 'tokens') {
-    if (!validToken(value.developerToken, 32)) return false
-    if (value.musicUserToken !== null
-      && value.musicUserToken !== undefined
-      && !validToken(value.musicUserToken, 32)) return false
+  if (value.event === 'session') {
+    const keys = Object.keys(value)
+    if (!keys.every((key) => ['event', 'storefront', 'authorized', 'hasUserToken'].includes(key))) {
+      return false
+    }
     if (typeof value.storefront !== 'string' || !/^[a-z]{2}$/.test(value.storefront)) {
       return false
     }
-    if (typeof value.authorized !== 'boolean') return false
+    if (typeof value.authorized !== 'boolean'
+      || typeof value.hasUserToken !== 'boolean') return false
+  }
+  if (value.event === 'api-response') {
+    const keys = Object.keys(value)
+    if (!keys.every((key) => ['event', 'requestId', 'status', 'body'].includes(key))
+      || !Number.isSafeInteger(value.requestId) || value.requestId <= 0
+      || !Number.isInteger(value.status) || value.status < 100 || value.status > 599
+      || typeof value.body !== 'string') return false
   }
   if (value.event === 'authorization-reflected'
     && typeof value.authorized !== 'boolean') return false
@@ -205,6 +257,7 @@ module.exports = {
   isAllowedRendererEvent,
   isTrustedAppleUrl,
   mayPersistCookies,
+  runtimeIdentity,
   safeErrorDetail,
   serializedSize,
 }

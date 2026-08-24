@@ -275,7 +275,7 @@ impl AppModel {
     pub(super) fn subtitle(&self) -> String {
         match &self.stage {
             Stage::Ready => self
-                .tokens
+                .apple_session
                 .as_ref()
                 .map(|t| t.storefront.to_uppercase())
                 .unwrap_or_default(),

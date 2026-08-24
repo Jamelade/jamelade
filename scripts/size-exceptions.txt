@@ -6,7 +6,15 @@
 # needs to be a deliberate line in a diff.
 #
 # path                              max   why
-src/app/mod.rs                      3905  # the model, the messages, `view!` and both reducers.
+src/app/mod.rs                      3963  # the model, the messages, `view!` and both reducers.
+                                          # 3962 -> 3963: a theme choice repaints the dedicated
+                                          # surface provider after the existing scheme update.
+                                          # 3939 -> 3962: one album-header artist intent resolves
+                                          # through the existing bounded song-container request.
+                                          # 3923 -> 3939: a separately blurred bottom-bar artwork
+                                          # path crosses the existing tagged artwork result shapes.
+                                          # 3905 -> 3923: one playing-song favourite intent and its
+                                          # reducer arm reuse the established library write path.
                                           # 3904 -> 3905: the main navigation surface is named for
                                           # locally adaptive clear-art foreground styling.
                                           # 3866 -> 3904: artist-page actions cross the root model;
@@ -91,6 +99,8 @@ src/app/mod.rs                      3905  # the model, the messages, `view!` and
                                           # template and two local RGB tints. The reducer rejects a
                                           # late result so an old album cannot recolour a new track;
                                           # extraction and animation remain in their own modules.
+                                          # 3310 -> 3320: Lyrics.ovh adds one separately consented
+                                          # message and reducer arm; fetching remains in discovery.rs.
                                           # 3320 -> 3369: the glass control adds one preference
                                           # message and two tagged artwork result shapes, plus their
                                           # reducer arms and stale-radius guards. Rendering remains in
@@ -123,9 +133,13 @@ src/app/mod.rs                      3905  # the model, the messages, `view!` and
                                           # 3756 -> 3802: opacity, Jamkin motion, lyric scale and
                                           # background-visibility preferences cross as four bounded
                                           # messages/reducer arms; each renderer remains outside.
-src/app/chrome.rs                    947  # menus and the dialogs they open. Jamelade's companion
+src/app/chrome.rs                    948  # menus and the dialogs they open. Jamelade's companion
+                                          # 947 -> 948: the theme row reads its ordered labels from
+                                          # the split settings/theme.rs model instead of a literal.
                                           # preference includes a local image preview and updates its
                                           # personality text without involving the main view tree.
+                                          # 615 -> 635: a second provider needs its own switch and
+                                          # exact disclosure; sharing LRCLIB's consent is forbidden.
                                           # 635 -> 655: one native scale row exposes transparency and
                                           # blur together; persistence and rendering stay elsewhere.
                                           # 655 -> 668: one switch exposes the separately owned desktop
@@ -141,7 +155,8 @@ src/app/chrome.rs                    947  # menus and the dialogs they open. Jam
                                           # 782 -> 803: one native combo exposes Automatic, High and
                                           # Performance; the policy lives in `settings/jamkin_quality.rs`.
                                           # 803 -> 816: a non-interactive first-party Apple lyrics row
-                                          # makes the source order visible beside the optional fallback.
+                                          # makes the source order visible beside the two genuinely
+                                          # optional disclosure switches.
                                           # 816 -> 867: one native lyric-colour scale and one capability-
                                           # aware Edge Walk switch. Neither owns rendering or movement.
                                           # 867 -> 947: four native rows expose opacity, reduced Jamkin
@@ -183,9 +198,11 @@ src/components/lyrics_view.rs        625  # one native synchronized-lyrics surfa
                                           # seek buttons while unsynced text remains selectable.
                                           # 619 -> 625: reduced motion is applied live to the existing
                                           # Jamkin actor; lyric animation remains in this component.
-src/components/now_playing.rs       1109  # one component, and the one whose seek arithmetic took
+src/components/now_playing.rs       1115  # one component, and the one whose seek arithmetic took
                                           # four rounds to get right. Splitting it is a design
                                           # question, not a move.
+                                          # 1109 -> 1115: the shared snapshot carries favourite state
+                                          # and one bounded intent to the expanded player.
                                           # 1220 -> 1240: `mode_opacity`, shared with the drawer
                                           # and the queue header so one control cannot read two
                                           # ways in one app.
@@ -206,8 +223,11 @@ src/components/now_playing.rs       1109  # one component, and the one whose see
                                           # active page so that same button can stand down there.
                                           # 1103 -> 1109: the snapshot carries the playing catalog id
                                           # and exposes bounded link/navigation intents.
-src/music/client.rs                 1704  # one endpoint per method against one API. Long because
+src/music/client.rs                 1715  # one endpoint per method against one API. Long because
                                           # Apple is, and each method is short.
+                                          # 1704 -> 1715: idempotent GETs retry only 502/503/504
+                                          # twice; the status classifier and regression stay beside
+                                          # the sole authenticated request method.
                                           # 1624 -> 1704: the public artist top-songs and latest-release
                                           # views are best-effort beside the existing album relationship.
                                           # 980 -> 1020: `song_containers`. A queue item carries no
@@ -228,8 +248,11 @@ src/music/client.rs                 1704  # one endpoint per method against one 
                                           # 1540 -> 1624: Apple lyrics add one numeric-id endpoint, a
                                           # dedicated 2 MiB response ceiling and tiny wire types. TTML
                                           # parsing remains in `lyrics/apple_ttml.rs`.
-src/music/types.rs                  1112  # the JSON boundary (rule 9). Wire types and our types
+src/music/types.rs                  1142  # the JSON boundary (rule 9). Wire types and our types
                                           # side by side is the point — they are read together.
+                                          # 1112 -> 1142: library artists carry the catalog twin's
+                                          # editorial notes and tests pin the relationship fallback;
+                                          # the English-localization note documents the client fallback.
                                           # 1036 -> 1112: editorial notes become capped plain text and
                                           # one typed artist-page result groups its four native sections;
                                           # tests pin tag stripping, entity decoding and the limit.
@@ -275,7 +298,7 @@ src/app/library.rs                   859  # four collections and the catalog sea
                                           # 850 -> 855: asynchronous loads carry the account generation
                                           # that prevents a signed-out account repopulating the UI.
                                           # 855 -> 858: fixtures state the optional public share URL.
-src/player/protocol.rs               895  # the whole sidecar contract in one file, deliberately
+src/player/protocol.rs               931  # the whole sidecar contract in one file, deliberately
                                           # (rule 9). Splitting it would hide the drift it exists
                                           # to prevent.
                                           # 650 -> 740 for #89: a shared `ms` deserializer that
@@ -289,19 +312,32 @@ src/player/protocol.rs               895  # the whole sidecar contract in one fi
                                           # it was measured that MusicKit keeps its own and restores
                                           # it across launches — so the contract gained a direction
                                           # it should always have had.
-                                          # 790 -> 850 in the hardened fork: secure-storage mode is
-                                          # now explicit, and both Apple credentials plus storefront
-                                          # are shape-checked before entering application memory. The
-                                          # tests pin rejection without ever printing token values.
+                                          # 790 -> 850 in the hardened fork: secure-storage mode and
+                                          # authentication state became explicit and shape-checked.
                                           # 850 -> 875: a station's open-ended queue descriptor and
                                           # exact JSON test keep it distinct from finite song queues.
                                           # 875 -> 895: remote queue arrays and their text fields gain
                                           # structural limits before deserialization can retain them.
-src/components/player_view/mod.rs    935  # the model, `view!` and the reducer. The transport
+                                          # 895 -> 913: the credential-free browser broker adds typed
+                                          # request and bounded response envelopes. Only storefront and
+                                          # booleans now cross for session state; Apple credentials do not.
+                                          # 913 -> 931: HTTP status is range-checked at the protocol
+                                          # boundary, with malformed-status and oversized-body tests.
+src/components/player_view/mod.rs   1039  # the model, `view!` and the reducer. The transport
                                           # moved to a child module — see its header for why a
                                           # child and not a sibling. 870 before the split; this
                                           # number comes down as the ratchet intends, and is the
                                           # first time it has.
+                                          # 935 -> 977: width-aware drawer arithmetic, a dedicated
+                                          # wide transport slot, and two geometry regressions keep
+                                          # the wide sheet at one third without squeezing narrow UI.
+                                          # 977 -> 1003: wide album metadata moves under its cover,
+                                          # while song and artist remain centred over transport.
+                                          # 1003 -> 1014: the cover becomes an album navigation button
+                                          # and secondary metadata moves one typographic step upward.
+                                          # 1016 -> 1039: a size-group mirror balances the wide cover
+                                          # column beneath the fixed centred sheet handle, and Lyrics
+                                          # reuses the existing navigation output from the player row.
                                           # 790 -> 830: the drawer sizes its cover from the room it is
                                           # given rather than a constant, which is what lets it fit a
                                           # short window — plus the two constants that arithmetic is
@@ -312,8 +348,20 @@ src/components/player_view/mod.rs    935  # the model, `view!` and the reducer. 
                                           # the empty transport slot no longer claiming spacing.
                                           # 890 -> 935: separate accent-coloured artist and album links
                                           # replace the ambiguous combined subtitle.
-src/style.rs                        1396  # the accent, and the cover behind the whole window. The only
+src/style.rs                        1574  # the accent, and the cover behind the whole window. The only
                                           # CSS, and each rule argues for itself where it sits.
+                                          # 1524 -> 1574: the saved album-glass switch now gates both
+                                          # cover pixels and extracted colours, retaining the latest
+                                          # palette while named themes take over; regression tests pin
+                                          # that boundary and the themed headerbar colour.
+                                          # 1483 -> 1524: one replaceable named-theme provider and
+                                          # inline artist-biography affordances. Palette values and
+                                          # their tests are split into style/theme.rs.
+                                          # 1396 -> 1459: a second locally generated artwork path keeps
+                                          # the bottom player blurred at the otherwise clear endpoint;
+                                          # both paths share the existing bounded cross-fade and tests.
+                                          # 1459 -> 1483: clickable player artwork and metadata gain
+                                          # restrained hover and keyboard-focus affordances.
                                           # Over budget for one test: the backdrop must never carry
                                           # an animation. An `infinite` one cost ~20% of a core
                                           # permanently (#126), and the drift that did it was
@@ -337,12 +385,12 @@ src/style.rs                        1396  # the accent, and the cover behind the
                                           # a second theme provider.
                                           # 900 -> 1028: whole-window album glass adds a separately
                                           # replaceable material provider, bounded opacity formulas and
-                                          # tests for all three surfaces and both themes.
+                                          # tests for all three surfaces, both themes and SF Pro fallback.
                                           # 1028 -> 1077: the transparent Jamkin toplevel and its hover
                                           # lyric popover need one local material; window/timeline logic
                                           # remains in `components/jamkin_mode.rs`.
                                           # 1077 -> 1079: the separate toplevel explicitly inherits the
-                                          # same desktop-provided font stack as the main window.
+                                          # same locally installed SF Pro fallback as the main window.
                                           # 1079 -> 1140: the narrow sidebar becomes an album-tinted
                                           # glass surface with explicit hover and selection depth instead
                                           # of stock grey slabs.
@@ -399,7 +447,7 @@ src/app/queue.rs                     888  # click -> setQueue, healing a queue M
                                           # what was measured against a live player — the guard was
                                           # wrong twice before it was right.
                                           # 885 -> 887: fixtures state the optional public share URL.
-sidecar/main.js                      860  # the Electron process boundary: sandbox creation,
+sidecar/main.js                      871  # the Electron process boundary: sandbox creation,
                                           # navigation and popup policy, encrypted-cookie fallback,
                                           # bounded protocol, lifecycle and DRM startup. Security
                                           # policy is split into security.js; the remaining comments
@@ -414,9 +462,14 @@ sidecar/main.js                      860  # the Electron process boundary: sandb
                                           # 795 -> 860: a login-scoped, once-only document refresh rebuilds
                                           # MusicKit after Apple completes auth reflection, with a bounded
                                           # user-token fallback and no credential logging or new origin.
-sidecar/page-hook.js                 713  # the injected MusicKit hook (rule 4), and the one file that is
+                                          # 860 -> 871: credential events are consumed inside the browser
+                                          # process and reduced to credential-free session state for Rust.
+sidecar/page-hook.js                 857  # the injected MusicKit hook (rule 4), and the one file that is
                                           # deliberately defensive line by line: every property
                                           # feature-detected, every silent failure made loud.
+                                          # 844 -> 857: a three-second feature-detected wait bridges
+                                          # MusicKit session readiness to API-method readiness without
+                                          # exposing credentials or retrying a write in native code.
                                           # Recorded rather than cut because most of its length is
                                           # the traps that cost rounds to find — `did-start-loading`
                                           # invalidating the hook, the two queue events that must
@@ -435,16 +488,24 @@ sidecar/page-hook.js                 713  # the injected MusicKit hook (rule 4),
                                           # 705 -> 713: Apple's existing auth-reflection event emits one
                                           # boolean lifecycle signal; tokens remain on their established
                                           # bounded channel and never enter the signal.
-src/player/sidecar.rs                656  # the Rust/Electron process boundary. Bounded command/event
+                                          # 713 -> 844: a route-allowlisted MusicKit broker keeps Apple
+                                          # credentials in Chromium while returning capped JSON results.
+                                          # It stays here because this is the only page-world MusicKit API.
+src/player/sidecar.rs                807  # the Rust/Electron process boundary. Bounded command/event
                                           # channels, rate windows and a capped line reader prevent a
                                           # compromised renderer or wedged child from retaining memory
                                           # without limit; raw protocol data and local paths stay out of
-                                          # diagnostics. Splitting those halves would hide the boundary.
+                                          # diagnostics. The test profile adds one compile-time identity.
                                           # 649 -> 656: a fixed, URL-free warning makes a denied network
                                           # request visible without logging its hostname or page data.
-src/components/artwork.rs            639  # the single artwork trust boundary plus its decode, atomic
+                                          # 656 -> 806: bounded request IDs, pending slots and timeouts
+                                          # route credential-free Apple responses without logging paths
+                                          # or bodies. Keeping it here preserves one process boundary.
+src/components/artwork.rs            657  # the single artwork trust boundary plus its decode, atomic
                                           # cache, blur and image tests. HTTPS/mzstatic validation,
                                           # redirect denial, streamed size limits, symlink checks and
                                           # URL-free errors belong beside the only fetch they protect.
                                           # 617 -> 639: the 100% endpoint writes a distinct full-size,
                                           # unblurred cache derivative; ordinary blur remains bounded.
+                                          # 639 -> 657: the bottom bar caps clarity at the default
+                                          # blur and a regression pins that local-only derivative.

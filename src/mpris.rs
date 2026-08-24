@@ -49,9 +49,6 @@ use relm4::ComponentSender;
 use crate::app::{AppModel, AppMsg};
 use crate::components::now_playing::Repeat;
 
-/// Bus name suffix — the full name becomes `org.mpris.MediaPlayer2.Jamelade`.
-const BUS_SUFFIX: &str = "Jamelade";
-
 /// Everything MPRIS exports, flattened so it can be diffed cheaply.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct MprisState {
@@ -193,7 +190,7 @@ impl Mpris {
 
         let slot = this.player.clone();
         relm4::spawn_local(async move {
-            let player = match Player::builder(BUS_SUFFIX)
+            let player = match Player::builder(crate::MPRIS_BUS_SUFFIX)
                 .identity(crate::APP_NAME)
                 .desktop_entry(crate::LAUNCHER_ID)
                 .can_play(true)
@@ -225,7 +222,10 @@ impl Mpris {
             // it can outlive this scope. It must be awaited promptly or the
             // interface never answers.
             relm4::spawn_local(player.run());
-            tracing::info!("MPRIS exported as org.mpris.MediaPlayer2.{BUS_SUFFIX}");
+            tracing::info!(
+                "MPRIS exported as org.mpris.MediaPlayer2.{}",
+                crate::MPRIS_BUS_SUFFIX
+            );
             *slot.borrow_mut() = Some(player);
         });
 

@@ -38,13 +38,32 @@ fn only_numeric_catalog_ids_reach_apple_lyrics() {
 #[test]
 fn every_provider_requires_its_own_opt_in() {
     assert!(!Providers::default().any());
-    assert!(Providers { lrclib: true }.any());
+    assert!(
+        Providers {
+            lrclib: true,
+            lyrics_ovh: false,
+        }
+        .any()
+    );
+    assert!(
+        Providers {
+            lrclib: false,
+            lyrics_ovh: true,
+        }
+        .any()
+    );
 }
 
 #[test]
 fn provider_results_keep_attribution_in_the_memory_cache_value() {
     let lrclib = lyrics_from_wire(&candidate("Song", "Artist", "Album", 120.0, "[00:01]Hello"));
     assert_eq!(lrclib.source, Some(Provider::Lrclib));
+
+    let wire: LyricsOvhWire = serde_json::from_str(r#"{"lyrics":"Hello\nworld"}"#).unwrap();
+    let lyrics_ovh = lyrics_from_ovh_wire(Some(&wire));
+    assert_eq!(lyrics_ovh.source, Some(Provider::LyricsOvh));
+    assert_eq!(lyrics_ovh.lines.len(), 2);
+    assert!(lyrics_ovh.lines.iter().all(|line| line.at_ms.is_none()));
 }
 
 #[test]

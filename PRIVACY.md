@@ -18,7 +18,13 @@ Apple receives sign-in, subscription, catalogue, library, playback, artwork,
 and first-party lyric requests. Sign-in happens on Apple's own page in a
 restricted Electron window. Jamelade stores only Apple-domain cookies, in one
 OS-keyring-encrypted local vault. If a supported keyring is unavailable, the
-session is memory-only. Developer and music-user tokens remain in memory.
+session is memory-only. Apple cookies and MusicKit tokens remain inside the
+browser boundary; the native process receives only bounded response data.
+
+Artist biographies may use a separate credential-free request to Apple's
+public artist page when the authenticated API response has no biography. That
+request sends the numeric artist ID and the requester's IP address to Apple; it
+has no cookie jar, Apple token, or account identifier.
 
 Apple applies its own privacy policy and service terms to this traffic.
 
@@ -28,6 +34,10 @@ Apple applies its own privacy policy and service terms to this traffic.
   lyric, LRCLIB receives the track title, artist, album, duration, and the
   requester's IP address. Jamelade sends no Apple cookie or token. LRCLIB had no
   public privacy policy when this notice was reviewed.
+- **Lyrics.ovh lyrics:** off by default and contacted only after earlier
+  enabled sources have no usable result. It receives the artist, title, and
+  requester's IP address and may query downstream lyric sites. Jamelade sends
+  no Apple cookie or token.
 - **Discord activity:** off by default. When enabled, Jamelade gives the local
   Discord-compatible client the current title, artist, album, selected Jamkin,
   and playback timing. Discord then applies the user's activity and audience

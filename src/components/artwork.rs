@@ -299,6 +299,17 @@ pub(crate) fn backdrop_blur_radius(strength: u8) -> usize {
     (MAX_BLUR_RADIUS * remaining).div_ceil(100)
 }
 
+/// The bottom player remains a softened glass surface even when the window is
+/// showing fully clear artwork. Below the normal default it follows the user
+/// toward a stronger blur; above it, it stops getting sharper.
+fn bar_backdrop_strength(strength: u8) -> u8 {
+    strength.min(crate::settings::DEFAULT_GLASS_STRENGTH)
+}
+
+pub fn bar_backdrop(path: &Path, strength: u8) -> Option<PathBuf> {
+    backdrop(path, bar_backdrop_strength(strength))
+}
+
 /// A wider average needs a little more colour restored. Derived only from the
 /// radius so the radius alone is sufficient as the cache key.
 fn saturation(radius: usize) -> u32 {
@@ -606,6 +617,14 @@ mod tests {
         }
         assert_eq!(backdrop_size(backdrop_blur_radius(90)), CLEAR_BACKDROP_PX);
         assert_eq!(backdrop_size(backdrop_blur_radius(70)), BACKDROP_PX);
+    }
+
+    #[test]
+    fn the_bottom_bar_never_loses_its_default_blur() {
+        assert_eq!(bar_backdrop_strength(40), 40);
+        assert_eq!(bar_backdrop_strength(75), 75);
+        assert_eq!(bar_backdrop_strength(100), 75);
+        assert!(backdrop_blur_radius(bar_backdrop_strength(100)) > backdrop_blur_radius(100));
     }
 
     #[test]

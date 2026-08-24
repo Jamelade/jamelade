@@ -25,11 +25,32 @@ use relm4::RelmApp;
 use relm4::gtk;
 use tracing_subscriber::EnvFilter;
 
+#[cfg(not(feature = "broker-test"))]
 pub(crate) const APP_ID: &str = "io.github.Jamelade.Jamelade";
+#[cfg(feature = "broker-test")]
+pub(crate) const APP_ID: &str = "io.github.Jamelade.Jamelade.BrokerTest";
 /// A portal-managed sub-launcher whose icon can be replaced without granting
 /// the Flatpak access to the host's application directory.
+#[cfg(not(feature = "broker-test"))]
 pub(crate) const LAUNCHER_ID: &str = "io.github.Jamelade.Jamelade.Launcher";
+#[cfg(feature = "broker-test")]
+pub(crate) const LAUNCHER_ID: &str = "io.github.Jamelade.Jamelade.BrokerTest.Launcher";
+#[cfg(not(feature = "broker-test"))]
 pub(crate) const APP_NAME: &str = "Jamelade";
+#[cfg(feature = "broker-test")]
+pub(crate) const APP_NAME: &str = "Jamelade Broker Test";
+#[cfg(not(feature = "broker-test"))]
+pub(crate) const MPRIS_BUS_SUFFIX: &str = "Jamelade";
+#[cfg(feature = "broker-test")]
+pub(crate) const MPRIS_BUS_SUFFIX: &str = "JameladeBrokerTest";
+#[cfg(not(feature = "broker-test"))]
+pub(crate) const SIDECAR_IDENTITY: &str = "stable";
+#[cfg(feature = "broker-test")]
+pub(crate) const SIDECAR_IDENTITY: &str = "broker-test";
+#[cfg(not(feature = "broker-test"))]
+pub(crate) const SIDECAR_PROFILE_NAME: &str = "Jamelade";
+#[cfg(feature = "broker-test")]
+pub(crate) const SIDECAR_PROFILE_NAME: &str = "JameladeBrokerTest";
 
 fn main() {
     tracing_subscriber::fmt()
@@ -53,6 +74,7 @@ fn main() {
     settings.apply_theme();
     // Before the window exists, so nothing is ever drawn in the wrong accent.
     style::init(
+        settings.theme,
         style::Accent::parse(&settings.accent),
         settings.companion,
         settings.player_backdrop,
@@ -73,4 +95,25 @@ fn setup_icon(companion: companion::Companion) {
         theme.add_search_path(concat!(env!("CARGO_MANIFEST_DIR"), "/data/icons"));
     }
     gtk::Window::set_default_icon_name(companion.window_icon_name());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn application_identities_are_a_consistent_profile() {
+        assert!(LAUNCHER_ID.starts_with(&format!("{APP_ID}.")));
+        assert!(!APP_NAME.is_empty());
+        assert!(!MPRIS_BUS_SUFFIX.contains('.'));
+        if cfg!(feature = "broker-test") {
+            assert!(APP_ID.ends_with(".BrokerTest"));
+            assert_eq!(SIDECAR_IDENTITY, "broker-test");
+            assert_eq!(SIDECAR_PROFILE_NAME, "JameladeBrokerTest");
+        } else {
+            assert_eq!(APP_ID, "io.github.Jamelade.Jamelade");
+            assert_eq!(SIDECAR_IDENTITY, "stable");
+            assert_eq!(SIDECAR_PROFILE_NAME, "Jamelade");
+        }
+    }
 }

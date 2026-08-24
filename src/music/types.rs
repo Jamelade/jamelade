@@ -194,7 +194,8 @@ pub struct Artist {
     /// Apple's genre list, joined — "Pop, Latin".
     pub genres: String,
     /// Apple's catalog biography, reduced to bounded plain text before it
-    /// crosses into the UI. Library artists inherit it from their catalog twin.
+    /// crosses into the UI. Library artists inherit it from their catalog twin;
+    /// missing localizations may fall back to Apple's English catalog text.
     #[serde(default)]
     pub biography: String,
     /// As [`Album::library`]. A library artist has no artwork of its own —
@@ -608,7 +609,7 @@ impl From<Resource<ArtistAttributes>> for Artist {
             biography: a
                 .as_ref()
                 .and_then(|a| a.editorial_notes.as_ref())
-                .map(|notes| editorial_plain_text(&notes.standard))
+                .map(|notes| editorial_plain_text(notes.preferred()))
                 .unwrap_or_default(),
             library: false,
             artwork: a
@@ -622,7 +623,7 @@ impl From<Resource<ArtistAttributes>> for Artist {
 /// Apple editorial notes can contain lightweight HTML. The app never renders
 /// remote markup: tags are discarded, common entities are decoded, whitespace
 /// is normalized, and the result is capped before GTK sees it.
-fn editorial_plain_text(raw: &str) -> String {
+pub(crate) fn editorial_plain_text(raw: &str) -> String {
     const MAX_CHARS: usize = 12_000;
 
     let mut plain = String::with_capacity(raw.len().min(MAX_CHARS));
@@ -677,12 +678,26 @@ pub(crate) struct PlaylistAttributes {
     pub url: String,
 }
 
-/// Apple wraps a playlist's blurb in an object with `standard` and sometimes
-/// `short`. Both are absent on a playlist you made yourself.
+/// Apple wraps editorial text in an object with long, short, and tagline
+/// variants. All are optional.
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct DescriptionAttribute {
     #[serde(default)]
     pub standard: String,
+    #[serde(default)]
+    pub short: String,
+    #[serde(default)]
+    pub tagline: String,
+}
+
+impl DescriptionAttribute {
+    fn preferred(&self) -> &str {
+        [&self.standard, &self.short, &self.tagline]
+            .into_iter()
+            .find(|value| !value.trim().is_empty())
+            .map(String::as_str)
+            .unwrap_or("")
+    }
 }
 
 impl From<Resource<PlaylistAttributes>> for Playlist {
@@ -867,6 +882,17 @@ mod tests {
     }
 
     #[test]
+    fn artist_editorial_notes_fall_back_to_the_short_variant() {
+        let raw = r#"{"data":[{"id":"9","attributes":{"name":"Aitana",
+            "editorialNotes":{"standard":"","short":"A short biography.",
+            "tagline":"A tagline."}}}]}"#;
+        let parsed: Response<Resource<ArtistAttributes>> = serde_json::from_str(raw).unwrap();
+        let artist = Artist::from(parsed.data.into_iter().next().unwrap());
+
+        assert_eq!(artist.biography, "A short biography.");
+    }
+
+    #[test]
     fn artwork_template_substitution() {
         let art = Artwork::new("https://is1.mzstatic.com/image/thumb/abc/{w}x{h}bb.{f}");
         assert_eq!(
@@ -986,6 +1012,8 @@ mod tests {
                             genre_names: vec!["Pop".into(), "Latin".into()],
                             editorial_notes: Some(DescriptionAttribute {
                                 standard: "<p>A catalog biography.</p>".into(),
+                                short: String::new(),
+                                tagline: String::new(),
                             }),
                         }),
                     }],
@@ -1101,6 +1129,8 @@ mod tests {
                 }),
                 description: Some(DescriptionAttribute {
                     standard: "The songs everyone is playing.".into(),
+                    short: String::new(),
+                    tagline: String::new(),
                 }),
                 url: String::new(),
             }),

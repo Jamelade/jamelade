@@ -1,0 +1,63 @@
+name: Update castLabs Electron
+
+on:
+  schedule:
+    - cron: "17 8 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: update-castlabs-electron
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Update pinned runtime metadata
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/update-electron-runtime.mjs
+
+      - name: Open or refresh the tested-update pull request
+        env:
+          BRANCH: ci/update-castlabs-electron
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          files=(
+            sidecar/package.json
+            sidecar/package-lock.json
+            packaging/flatpak/io.github.Jamelade.Jamelade.yml
+          )
+          if git diff --quiet -- "${files[@]}"; then
+            echo "castLabs Electron is current"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          gh auth setup-git
+          git checkout -B "$BRANCH"
+          git add "${files[@]}"
+          git commit -m "build(deps): update castLabs Electron"
+          git fetch origin "$BRANCH:refs/remotes/origin/$BRANCH" || true
+          git push --force-with-lease --set-upstream origin "$BRANCH"
+
+          number="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+          body="Updates the pinned Widevine-capable Chromium runtime. CI and a manual Apple Music playback check are required before merge; this workflow never publishes or installs it automatically."
+          if [ -n "$number" ]; then
+            gh pr edit "$number" --title "build(deps): update castLabs Electron" --body "$body"
+          else
+            gh pr create --base main --head "$BRANCH" \
+              --title "build(deps): update castLabs Electron" --body "$body"
+          fi
