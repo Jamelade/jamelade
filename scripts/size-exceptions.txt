@@ -138,9 +138,11 @@ src/app/mod.rs                      4410  # the model, the messages, `view!` and
                                           # messages/reducer arms; each renderer remains outside.
                                           # 4418 -> 4426: one shared four-second toast constructor
                                           # keeps ordinary notices transient; decisions remain dialogs.
-src/app/chrome.rs                   1078  # menus and the dialogs they open. Jamelade's companion
+src/app/chrome.rs                   1080  # menus and the dialogs they open. Jamelade's companion
                                           # Credits and the opt-in connection/language rows use
                                           # native dialogs; their behavior remains elsewhere.
+                                          # 1078 -> 1080: About receives the selected companion and
+                                          # resolves its existing local icon name; no new I/O lives here.
                                           # 947 -> 948: the theme row reads its ordered labels from
                                           # the split settings/theme.rs model instead of a literal.
                                           # preference includes a local image preview and updates its
@@ -240,10 +242,13 @@ src/components/now_playing.rs       1116  # one component, and the one whose see
                                           # active page so that same button can stand down there.
                                           # 1103 -> 1109: the snapshot carries the playing catalog id
                                           # and exposes bounded link/navigation intents.
-src/music/client.rs                 2081  # one endpoint per method against one API. Long because
+src/music/client.rs                 2093  # one endpoint per method against one API. Long because
                                           # Documented playlist writes, bounded credits and optional
                                           # first-party lyric variants stay at the Apple boundary.
                                           # Apple is, and each method is short.
+                                          # 2081 -> 2093: credits request an English localization and
+                                          # fall back to Apple's default response through the same
+                                          # bounded authenticated GET path.
                                           # 2053 -> 2057: bounded backoff covers a browser session
                                           # resuming slowly; only idempotent 502/503/504 GETs retry.
                                           # The policy stays beside the sole authenticated request.
@@ -379,8 +384,11 @@ src/components/player_view/mod.rs   1080  # the model, `view!` and the reducer. 
                                           # the empty transport slot no longer claiming spacing.
                                           # 890 -> 935: separate accent-coloured artist and album links
                                           # replace the ambiguous combined subtitle.
-src/style.rs                        1486  # the accent, and the cover behind the whole window. The only
+src/style.rs                        1504  # the accent, and the cover behind the whole window. The only
                                           # CSS, and each rule argues for itself where it sits.
+                                          # 1486 -> 1504: adaptive clear-art text uses one restrained
+                                          # contrast shadow instead of a four-sided outline; tests pin
+                                          # both dark- and light-foreground rendering.
                                           # 1574 -> 1486: both player surfaces return to the selected
                                           # theme; the compact bar's duplicate blur path is gone.
                                           # 1524 -> 1574: the saved album-glass switch now gates both
@@ -477,11 +485,14 @@ src/app/queue.rs                     888  # click -> setQueue, healing a queue M
                                           # what was measured against a live player — the guard was
                                           # wrong twice before it was right.
                                           # 885 -> 887: fixtures state the optional public share URL.
-sidecar/main.js                      871  # the Electron process boundary: sandbox creation,
+sidecar/main.js                      876  # the Electron process boundary: sandbox creation,
                                           # navigation and popup policy, encrypted-cookie fallback,
                                           # bounded protocol, lifecycle and DRM startup. Security
                                           # policy is split into security.js; the remaining comments
                                           # document observed Chromium behaviours that are load-bearing.
+                                          # 871 -> 876: current Flatpak/Zypak starts Chromium's disabled
+                                          # GPU service in the trusted main process; renderer sandboxing
+                                          # and the no-Node remote page boundary remain unchanged.
                                           # 710 -> 740 in the hardened fork: Chromium is now always
                                           # memory-only; main wires the separately tested keyring-
                                           # encrypted Apple-cookie vault and flushes it on shutdown.
@@ -523,7 +534,7 @@ sidecar/page-hook.js                 928  # the injected MusicKit hook (rule 4),
                                           # 713 -> 844: a route-allowlisted MusicKit broker keeps Apple
                                           # credentials in Chromium while returning capped JSON results.
                                           # It stays here because this is the only page-world MusicKit API.
-src/player/sidecar.rs                888  # the Rust/Electron process boundary. Bounded command/event
+src/player/sidecar.rs                941  # the Rust/Electron process boundary. Bounded command/event
                                           # Playlist text, IDs, counts and pending replies are
                                           # validated before they enter the browser process.
                                           # channels, rate windows and a capped line reader prevent a
@@ -537,6 +548,9 @@ src/player/sidecar.rs                888  # the Rust/Electron process boundary. 
                                           # or bodies. Keeping it here preserves one process boundary.
                                           # 875 -> 888: a three-permit API gate prevents eager library
                                           # loads from flooding the single browser-owned transport.
+                                          # 888 -> 941: Flatpak startup selects Zypak's still-sandboxed
+                                          # mimic strategy and a bounded native watchdog reports a
+                                          # genuinely stalled broker without exposing command data.
 src/components/artwork.rs            639  # the single artwork trust boundary plus its decode, atomic
                                           # cache, blur and image tests. HTTPS/mzstatic validation,
                                           # redirect denial, streamed size limits, symlink checks and
