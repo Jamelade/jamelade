@@ -28,7 +28,7 @@ version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
     exit 1
 }
 
-for tool in cargo rustc curl git jq make meson ninja pkg-config sha256sum tar unzip \
+for tool in cargo rustc cmp curl git jq make meson ninja pkg-config sha256sum tar unzip \
     patchelf desktop-file-validate appstreamcli dpkg-query glib-compile-schemas ldconfig; do
     command -v "$tool" >/dev/null 2>&1 || {
         printf 'AppImage build: missing required tool: %s\n' "$tool" >&2
@@ -78,6 +78,10 @@ electron_version='43.2.0+wvcus'
 electron_sha=d69d7cb6d27651f51c106fec52c746097d064f95b2fee6966f9888e44e0cbf54
 linuxdeploy_version=1-alpha-20251107-1
 linuxdeploy_sha=c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d
+appimage_runtime_version=20251108
+appimage_runtime_commit=dd6cebedcbddde9c82f89b011e8e1d40b6e43868
+appimage_runtime_sha=2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
+appimage_runtime_license_sha=aa154fc9070614bbe7921f89db11efd1dba7a1f3a41685958110e2230f9c0ca1
 
 glib_archive="$downloads/glib-$glib_version.tar.xz"
 wayland_archive="$downloads/wayland-$wayland_version.tar.xz"
@@ -90,6 +94,8 @@ adw_archive="$downloads/libadwaita-$adw_version.tar.xz"
 layer_archive="$downloads/gtk4-layer-shell-$layer_version.tar.gz"
 electron_archive="$downloads/electron-$electron_version-linux-x64.zip"
 linuxdeploy="$downloads/linuxdeploy-$linuxdeploy_version-x86_64.AppImage"
+appimage_runtime="$downloads/type2-runtime-$appimage_runtime_version-x86_64"
+appimage_runtime_license="$downloads/type2-runtime-$appimage_runtime_version-LICENSE"
 
 fetch "https://download.gnome.org/sources/glib/2.86/glib-$glib_version.tar.xz" \
     "$glib_sha" "$glib_archive"
@@ -113,6 +119,10 @@ fetch "https://github.com/castlabs/electron-releases/releases/download/v43.2.0%2
     "$electron_sha" "$electron_archive"
 fetch "https://github.com/linuxdeploy/linuxdeploy/releases/download/$linuxdeploy_version/linuxdeploy-x86_64.AppImage" \
     "$linuxdeploy_sha" "$linuxdeploy"
+fetch "https://github.com/AppImage/type2-runtime/releases/download/$appimage_runtime_version/runtime-x86_64" \
+    "$appimage_runtime_sha" "$appimage_runtime"
+fetch "https://raw.githubusercontent.com/AppImage/type2-runtime/$appimage_runtime_commit/LICENSE" \
+    "$appimage_runtime_license_sha" "$appimage_runtime_license"
 chmod 0755 "$linuxdeploy"
 
 deps_stamp="$prefix/.jamelade-appimage-deps"
@@ -285,6 +295,7 @@ install -Dm644 "$sources/gtk4-layer-shell-$layer_version/LICENSE" \
 install -Dm644 "$sidecar/node_modules/electron/dist/LICENSE" "$licences/electron/LICENSE"
 install -Dm644 "$sidecar/node_modules/electron/dist/LICENSES.chromium.html" \
     "$licences/electron/LICENSES.chromium.html"
+install -Dm644 "$appimage_runtime_license" "$licences/appimage-runtime/LICENSE"
 
 vendor="$build_root/cargo-vendor"
 rm -rf -- "$vendor"
@@ -337,12 +348,25 @@ if [[ "$(wc -l <"$system_licences/PACKAGES.tsv")" -le 1 ]] \
     exit 1
 fi
 
-export OUTPUT="$appimage"
+export LDAI_OUTPUT="$appimage"
+export LDAI_RUNTIME_FILE="$appimage_runtime"
 "$linuxdeploy" --appimage-extract-and-run \
     --appdir "$appdir" \
     --output appimage
 test -f "$appimage"
 chmod 0755 "$appimage"
+# appimagetool writes the package's MD5 into the runtime's dedicated 16-byte
+# .digest_md5 section. Every other runtime byte must remain identical.
+runtime_digest_offset=932096
+runtime_digest_size=16
+runtime_size="$(stat -c '%s' "$appimage_runtime")"
+if ! cmp -n "$runtime_digest_offset" "$appimage_runtime" "$appimage" \
+    || ! cmp -i "$((runtime_digest_offset + runtime_digest_size))" \
+        -n "$((runtime_size - runtime_digest_offset - runtime_digest_size))" \
+        "$appimage_runtime" "$appimage"; then
+    printf 'AppImage build: packaged runtime does not match the pinned input\n' >&2
+    exit 1
+fi
 
 extract="$build_root/extracted"
 rm -rf -- "$extract"
@@ -356,6 +380,7 @@ test -x "$extracted/usr/bin/jamelade"
 test -x "$extracted/usr/share/jamelade/sidecar/node_modules/electron/dist/electron"
 test -f "$extracted/usr/share/licenses/io.github.Jamelade.Jamelade/jamelade/COPYING"
 test -f "$extracted/usr/share/licenses/io.github.Jamelade.Jamelade/electron/LICENSES.chromium.html"
+test -f "$extracted/usr/share/licenses/io.github.Jamelade.Jamelade/appimage-runtime/LICENSE"
 test -f "$extracted/usr/share/licenses/io.github.Jamelade.Jamelade/rust-crates/CRATES.tsv"
 if find "$extracted" -type f \
     \( -iname 'libwidevinecdm.so' -o -iname '*widevine*cdm*' \
@@ -385,6 +410,8 @@ done
     printf 'GTK: %s\n' "$(pkg-config --modversion gtk4)"
     printf 'libadwaita: %s\n' "$(pkg-config --modversion libadwaita-1)"
     printf 'Electron: %s\n' "$electron_version"
+    printf 'AppImage runtime: %s (%s)\n' \
+        "$appimage_runtime_version" "$appimage_runtime_sha"
     printf 'Chromium renderer sandbox disabled: no\n'
     printf 'Signed AppImage: no\n'
 } >"$output/APPIMAGE-BUILDINFO.txt"

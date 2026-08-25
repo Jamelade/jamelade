@@ -18,6 +18,9 @@ chmod +x appimage-dist/Jamelade-*-x86_64.AppImage
 The build needs the packages installed by the AppImage job in
 `.github/workflows/release.yml`. It downloads only versioned, checksum-pinned
 GTK, libadwaita, gtk4-layer-shell, linuxdeploy, and castLabs Electron archives.
+The AppImage type-2 runtime is also fixed to a dated, checksum-pinned release;
+the build fails if its bytes differ outside appimagetool's standard embedded
+package-digest field.
 
 The Electron sidecar keeps Chromium's renderer sandbox enabled. Jamelade never
 adds `--no-sandbox`; a host that blocks Chromium's available sandbox mechanisms
