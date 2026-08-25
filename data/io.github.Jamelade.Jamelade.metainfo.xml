@@ -44,6 +44,11 @@
     <internet>always</internet>
   </requires>
   <releases>
+    <release version="2.1.0" date="2026-08-25">
+      <description>
+        <p>Jamelade 2.1 refines fully transparent album-art presentation with softer adaptive text contrast and clean selected-theme sidebar typography.</p>
+      </description>
+    </release>
     <release version="2.0.0" date="2026-08-25">
       <description>
         <p>Jamelade 2.0 adds native playlist creation and additions, artist biographies and credits, selectable colour themes, localized synchronized lyrics, sleep and A–B timers, optional ListenBrainz scrobbling, global shortcuts, and a refined player.</p>

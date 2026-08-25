@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.1.0 — 2026-08-25
+
+- Replaced the heavy four-sided adaptive text outline with a softer,
+  luminance-aware halo over fully exposed album artwork.
+- Kept sidebar typography on the selected theme instead of inheriting the
+  artwork foreground treatment.
+
 ## 2.0.0 — 2026-08-25
 
 - Added playlist creation and song additions, credits, sleep and A–B timers,

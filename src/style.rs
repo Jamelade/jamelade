@@ -1032,10 +1032,13 @@ fn glass_override_css(album_glass: bool, palette: Option<AlbumPalette>, theme: T
 }
 
 fn adaptive_text_css(palette: AlbumPalette, blend: f32) -> String {
-    let (foreground, shadow) = if palette.prefers_light_foreground() {
-        ("#ffffff", "#08090b")
+    let (foreground, shadow, drop_alpha, halo_alpha) = if palette.prefers_light_foreground() {
+        ("#ffffff", "#08090b", 0.58, 0.26)
     } else {
-        ("#111216", "#ffffff")
+        // A pale outline around dark type is especially visible on bright
+        // covers. Keep only a quiet light bloom; the foreground already owns
+        // the contrast on the artwork that selects this branch.
+        ("#111216", "#ffffff", 0.28, 0.14)
     };
     let blend = blend.clamp(0.0, 1.0);
     format!(
@@ -1048,29 +1051,39 @@ fn adaptive_text_css(palette: AlbumPalette, blend: f32) -> String {
          .art-foreground headerbar {{
              color: var(--art-fg-color);
              text-shadow:
-                 -1px -1px 1px alpha(var(--art-shadow-color), {:.3}),
-                  1px -1px 1px alpha(var(--art-shadow-color), {:.3}),
-                 -1px  1px 1px alpha(var(--art-shadow-color), {:.3}),
-                  1px  1px 1px alpha(var(--art-shadow-color), {:.3}),
-                  0 0 7px alpha(var(--art-shadow-color), {:.3});
+                 0 1px 3px alpha(var(--art-shadow-color), {:.3}),
+                 0 0 12px alpha(var(--art-shadow-color), {:.3});
          }}
          .art-foreground headerbar button,
          .art-foreground headerbar button image {{
              color: var(--art-fg-color);
              -gtk-icon-shadow:
                  0 1px 2px alpha(var(--art-shadow-color), {:.3}),
-                 0 0 6px alpha(var(--art-shadow-color), {:.3});
+                 0 0 7px alpha(var(--art-shadow-color), {:.3});
          }}
          .art-foreground .dim-label {{
-             color: alpha(var(--art-fg-color), 0.74);
+             color: alpha(var(--art-fg-color), 0.78);
+         }}
+         /* The sidebar has its own selected-theme surface even when the main
+            content is fully clear. Do not let the artwork halo inherit into
+            that calm panel; it was the source of the crushed outlined labels. */
+         .art-foreground .jam-glass-sidebar,
+         .art-foreground .jam-glass-sidebar headerbar {{
+             color: @window_fg_color;
+             text-shadow: none;
+         }}
+         .art-foreground .jam-glass-sidebar headerbar button,
+         .art-foreground .jam-glass-sidebar headerbar button image {{
+             color: @window_fg_color;
+             -gtk-icon-shadow: none;
+         }}
+         .art-foreground .jam-glass-sidebar .dim-label {{
+             color: alpha(@window_fg_color, 0.68);
          }}",
-        0.96 * blend,
-        0.96 * blend,
-        0.96 * blend,
-        0.96 * blend,
-        0.68 * blend,
-        0.94 * blend,
-        0.62 * blend,
+        drop_alpha * blend,
+        halo_alpha * blend,
+        drop_alpha * 0.86 * blend,
+        halo_alpha * 0.86 * blend,
     )
 }
 
@@ -1412,7 +1425,7 @@ mod tests {
     }
 
     #[test]
-    fn adaptive_text_uses_opposing_foreground_and_shadow() {
+    fn adaptive_text_uses_opposing_foreground_and_a_soft_halo() {
         let dark = adaptive_text_css(
             AlbumPalette {
                 primary: crate::palette::Rgb { r: 8, g: 9, b: 12 },
@@ -1427,6 +1440,11 @@ mod tests {
         assert!(dark.contains("--art-target-color: #ffffff"));
         assert!(dark.contains("--art-fg-color: mix("));
         assert!(dark.contains("--art-shadow-color: #08090b"));
+        assert!(dark.contains("0 1px 3px"));
+        assert!(dark.contains("0 0 12px"));
+        assert!(!dark.contains("-1px -1px"));
+        assert!(dark.contains(".art-foreground .jam-glass-sidebar"));
+        assert!(dark.contains("text-shadow: none"));
 
         let light = adaptive_text_css(
             AlbumPalette {

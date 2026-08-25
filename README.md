@@ -181,15 +181,15 @@ recommended** because it adds an outer application sandbox:
 
 ```bash
 sha256sum --ignore-missing -c SHA256SUMS
-flatpak install --user ./Jamelade-2.0.0-x86_64.flatpak
+flatpak install --user ./Jamelade-2.1.0-x86_64.flatpak
 ```
 
 The secondary AppImage targets Ubuntu 24.04 or newer and contemporary Fedora:
 
 ```bash
 sha256sum --ignore-missing -c SHA256SUMS
-chmod +x Jamelade-2.0.0-x86_64.AppImage
-./Jamelade-2.0.0-x86_64.AppImage
+chmod +x Jamelade-2.1.0-x86_64.AppImage
+./Jamelade-2.1.0-x86_64.AppImage
 ```
 
 The AppImage keeps Chromium's renderer sandbox enabled but, like any native
