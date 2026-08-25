@@ -76,6 +76,8 @@ const MAX_PLAYLIST_NAME_BYTES: usize = 512;
 const MAX_PLAYLIST_DESCRIPTION_BYTES: usize = 4 * 1024;
 const MAX_PLAYLIST_TRACKS: usize = 1_000;
 const BROKER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(35);
+const CACHED_WIDEVINE_STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const FIRST_WIDEVINE_STARTUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 
 type PendingBroker = std::collections::HashMap<u64, oneshot::Sender<ApiReply>>;
 
@@ -541,6 +543,23 @@ fn electron_user_data_dir() -> Result<PathBuf> {
     Ok(path)
 }
 
+fn has_cached_widevine(user_data: &Path) -> bool {
+    std::fs::read_dir(user_data.join("WidevineCdm"))
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.ok())
+        .any(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+}
+
+fn widevine_startup_timeout(cached: bool) -> std::time::Duration {
+    if cached {
+        CACHED_WIDEVINE_STARTUP_TIMEOUT
+    } else {
+        FIRST_WIDEVINE_STARTUP_TIMEOUT
+    }
+}
+
 /// Start the sidecar. Returns a handle for commands and a receiver of events.
 ///
 /// The receiver ends with exactly one `Incoming::Died`, which is `app/mod.rs`'s cue
@@ -549,12 +568,19 @@ pub fn spawn() -> Result<(Handle, mpsc::Receiver<Incoming>)> {
     let dir = locate()?;
     let bin = electron_binary(&dir)?;
     let user_data = electron_user_data_dir()?;
+    let widevine_timeout = widevine_startup_timeout(has_cached_widevine(&user_data));
     tracing::info!("spawning sidecar");
 
     let mut child = TokioCommand::new(&bin)
         .arg(format!("--user-data-dir={}", user_data.display()))
         .arg(".")
         .env("JAMELADE_SIDECAR_IDENTITY", crate::SIDECAR_IDENTITY)
+        // Force Zypak's older nested-sandbox strategy. The portal-backed spawn
+        // strategy hangs before Electron executes JavaScript on current
+        // Flatpak/bubblewrap releases. `in-process-gpu` plus `disable-gpu` in
+        // main.js prevents the one helper that Chromium 43 cannot start under
+        // this strategy; the Apple renderer remains sandboxed.
+        .env("ZYPAK_ZYGOTE_STRATEGY_SPAWN", "0")
         .current_dir(&dir)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -654,8 +680,21 @@ pub fn spawn() -> Result<(Handle, mpsc::Receiver<Incoming>)> {
     let reader_pending = broker_pending.clone();
     tokio::spawn(async move {
         let mut lines = BufReader::new(stdout);
+        let startup_timer = tokio::time::sleep(widevine_timeout);
+        tokio::pin!(startup_timer);
+        let mut widevine_ready = false;
+        let mut startup_timed_out = false;
         loop {
-            match read_bounded_line(&mut lines, MAX_EVENT_LINE_BYTES).await {
+            let next = tokio::select! {
+                line = read_bounded_line(&mut lines, MAX_EVENT_LINE_BYTES) => line,
+                _ = &mut startup_timer, if !widevine_ready => {
+                    startup_timed_out = true;
+                    tracing::warn!("Widevine startup timed out; restarting the sidecar");
+                    let _ = child.start_kill();
+                    break;
+                }
+            };
+            match next {
                 Ok(Some(BoundedLine::Data(line))) => {
                     if line.iter().all(u8::is_ascii_whitespace) {
                         continue;
@@ -673,7 +712,12 @@ pub fn spawn() -> Result<(Handle, mpsc::Receiver<Incoming>)> {
                             }
                             continue;
                         }
-                        Ok(ev) => Incoming::Event(ev),
+                        Ok(ev) => {
+                            if matches!(&ev, Event::WidevineReady) {
+                                widevine_ready = true;
+                            }
+                            Incoming::Event(ev)
+                        }
                         Err(err) => {
                             // Never log or retain the raw line: a token event
                             // whose schema drifted is precisely what failed to
@@ -703,6 +747,9 @@ pub fn spawn() -> Result<(Handle, mpsc::Receiver<Incoming>)> {
         // Dropping the senders wakes every outstanding caller as unavailable.
         reader_pending.lock().await.clear();
         let reason = match child.wait().await {
+            Ok(status) if startup_timed_out => {
+                format!("sidecar startup watchdog expired: {status}")
+            }
             Ok(status) => format!("sidecar exited: {status}"),
             Err(err) => format!("sidecar wait failed: {err}"),
         };
@@ -850,6 +897,12 @@ mod tests {
         assert_eq!(restart_delay(3).as_secs(), 8);
         assert_eq!(restart_delay(5).as_secs(), 30);
         assert_eq!(restart_delay(99).as_secs(), 30, "must stay bounded");
+    }
+
+    #[test]
+    fn widevine_watchdog_allows_a_first_download_but_bounds_cached_startup() {
+        assert_eq!(widevine_startup_timeout(true).as_secs(), 30);
+        assert_eq!(widevine_startup_timeout(false).as_secs(), 180);
     }
 
     #[test]

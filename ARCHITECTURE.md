@@ -28,7 +28,9 @@ playback, Chromium, and Widevine.
    or explicit generation keys rather than stale list positions.
 6. **Supervise the sidecar.** Bound every pipe, queue, line, message, and retry.
    Detect process death, report it to the model, and restart with capped
-   backoff instead of presenting a dead player as healthy.
+   backoff instead of presenting a dead player as healthy. Widevine readiness
+   is bounded too: a stalled component updater exits into that same recovery
+   path rather than leaving the interface on “Preparing playback” forever.
 7. **Keep credentials inside the browser boundary.** Do not copy MusicKit
    tokens into the preload bridge or Rust. Persist Apple cookies only in the
    keyring-encrypted vault; if secure encryption is unavailable, use an
@@ -58,6 +60,10 @@ playback, Chromium, and Widevine.
   authentication failures, rate limits, or arbitrary statuses.
 - `sidecar/security.js` restricts privileged Chromium navigation, network
   destinations, renderer events, and diagnostic text.
+- The Flatpak launch forces Zypak's nested mimic sandbox because its newer
+  portal-spawn strategy hangs on current Flatpak/bubblewrap. Chromium's GPU is
+  disabled and kept in-process so that fallback needs no GPU helper; the Apple
+  renderer remains sandboxed with context isolation and no Node access.
 - `sidecar/session-vault.js` validates Apple cookies and stores only an
   encrypted, size-bounded snapshot with private filesystem permissions.
 - `src/private_storage.rs` provides bounded, no-follow reads and atomic

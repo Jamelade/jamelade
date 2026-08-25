@@ -172,6 +172,14 @@ app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 //
 // Audio is unaffected — Widevine on Linux decrypts in software and this is an
 // audio-only client. If Jamelade ever plays video, revisit this first.
+//
+// Zypak's portal-backed spawn strategy is broken with current Flatpak and
+// bubblewrap releases. Its still-sandboxed mimic strategy works, but Chromium
+// 43 otherwise tries to create a nominal GPU helper and aborts after that
+// helper cannot initialize. Keep the disabled software GPU service in this
+// trusted main process so no GPU child is needed; renderer sandboxing remains
+// enabled and the remote Apple page still has no Node access.
+app.commandLine.appendSwitch('in-process-gpu')
 app.commandLine.appendSwitch('disable-gpu')
 app.commandLine.appendSwitch('disable-renderer-backgrounding')
 app.commandLine.appendSwitch('disable-background-timer-throttling')

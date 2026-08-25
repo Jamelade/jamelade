@@ -13,6 +13,8 @@
   advisories, and the narrowly scoped launcher-icon helper before packaging.
 - Fixed song-credit localization to follow Jamelade's interface language and
   made About display the currently selected Jamkin tile.
+- Added a bounded automatic sidecar restart when Chromium's Widevine component
+  updater stalls during a cold launch.
 
 ## 1.0.0 — 2026-08-25
 
