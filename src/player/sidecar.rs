@@ -29,7 +29,7 @@ use std::process::Stdio;
 use anyhow::{Context, Result, anyhow};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command as TokioCommand;
-use tokio::sync::{Mutex as AsyncMutex, mpsc, oneshot};
+use tokio::sync::{Mutex as AsyncMutex, Semaphore, mpsc, oneshot};
 
 use super::protocol::{ApiMethod, ApiResponse, Command, Event};
 
@@ -67,6 +67,10 @@ const COMMAND_CHANNEL_CAPACITY: usize = 256;
 const MAX_EVENT_LINE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_DIAGNOSTIC_LINE_BYTES: usize = 16 * 1024;
 const MAX_BROKER_PENDING: usize = 64;
+/// MusicKit exposes one authenticated browser transport. A small global limit
+/// prevents the four eager library loaders from turning into a burst of eight
+/// simultaneous API calls after login or resume.
+const MAX_BROKER_API_REQUESTS: usize = 3;
 const MAX_BROKER_PATH_BYTES: usize = 4 * 1024;
 const MAX_PLAYLIST_NAME_BYTES: usize = 512;
 const MAX_PLAYLIST_DESCRIPTION_BYTES: usize = 4 * 1024;
@@ -111,6 +115,7 @@ pub struct Broker {
     tx: mpsc::Sender<Command>,
     pending: std::sync::Arc<AsyncMutex<PendingBroker>>,
     next_id: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    api_permits: std::sync::Arc<Semaphore>,
 }
 
 impl std::fmt::Debug for Broker {
@@ -135,6 +140,12 @@ impl Broker {
         if !valid_broker_path(&path) {
             return Err(BrokerError::InvalidRequest);
         }
+
+        let _permit = self
+            .api_permits
+            .acquire()
+            .await
+            .map_err(|_| BrokerError::Unavailable)?;
 
         self.request_command(move |request_id| Command::ApiRequest {
             request_id,
@@ -612,6 +623,7 @@ pub fn spawn() -> Result<(Handle, mpsc::Receiver<Incoming>)> {
         tx: cmd_tx.clone(),
         pending: broker_pending.clone(),
         next_id: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)),
+        api_permits: std::sync::Arc::new(Semaphore::new(MAX_BROKER_API_REQUESTS)),
     };
 
     // Writer task — owns stdin.
@@ -732,6 +744,7 @@ mod tests {
                     tx,
                     pending,
                     next_id: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)),
+                    api_permits: std::sync::Arc::new(Semaphore::new(MAX_BROKER_API_REQUESTS)),
                 },
                 rate: Default::default(),
                 queue_warned: Default::default(),

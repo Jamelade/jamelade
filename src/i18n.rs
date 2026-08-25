@@ -67,6 +67,14 @@ pub fn set_language(language: Language) {
     );
 }
 
+pub fn apple_lyrics_localization() -> (&'static str, &'static str) {
+    if ACTIVE.load(Ordering::Relaxed) == GERMAN {
+        ("de-DE", "de-Latn")
+    } else {
+        ("en-US", "en-Latn")
+    }
+}
+
 fn detect_system_language() -> u8 {
     for name in ["LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"] {
         let Ok(value) = std::env::var(name) else {

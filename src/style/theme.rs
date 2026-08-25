@@ -144,9 +144,44 @@ pub(super) fn css(theme: Theme) -> String {
              --dialog-fg-color: {foreground};
              --shade-color: {shade};
              --jamelade-headerbar-color: {surface};
+             --theme-glass-primary-color: {glass_primary};
+             --theme-glass-secondary-color: {glass_secondary};
          }}
          .jamelade-window {{
              background-color: {window};
+             color: {foreground};
+         }}
+         .jamelade-window:backdrop .jam-glass-sidebar,
+         .jam-glass-sidebar:backdrop {{
+             background-color: alpha({window}, 0.76);
+             background-image:
+                 radial-gradient(
+                     circle at 18% 4%,
+                     alpha({glass_primary}, 0.24),
+                     transparent 43%
+                 ),
+                 linear-gradient(
+                     158deg,
+                     alpha(#ffffff, 0.14),
+                     alpha({glass_primary}, 0.075) 48%,
+                     alpha({glass_secondary}, 0.09)
+                 );
+             color: {foreground};
+         }}
+         .jamelade-window:backdrop .jam-glass-sidebar headerbar,
+         .jam-glass-sidebar headerbar:backdrop {{
+             background-color: alpha({surface}, 0.78);
+             color: {foreground};
+         }}
+         .jamelade-window:backdrop .np-row,
+         .np-row:backdrop {{
+             background-color: {window};
+             background-image: linear-gradient(
+                 145deg,
+                 alpha(#ffffff, 0.13),
+                 transparent 42%,
+                 alpha({glass_primary}, 0.09)
+             );
              color: {foreground};
          }}",
         window = palette.window,
@@ -155,6 +190,8 @@ pub(super) fn css(theme: Theme) -> String {
         card = palette.card,
         foreground = palette.foreground,
         shade = palette.shade,
+        glass_primary = palette.glass_primary,
+        glass_secondary = palette.glass_secondary,
     )
 }
 
@@ -178,7 +215,10 @@ mod tests {
             assert!(css.contains("@define-color window_bg_color"));
             assert!(css.contains("--window-bg-color"));
             assert!(css.contains("--jamelade-headerbar-color"));
+            assert!(css.contains("--theme-glass-primary-color"));
             assert!(css.contains(".jamelade-window"));
+            assert!(css.contains(".jam-glass-sidebar:backdrop"));
+            assert!(css.contains(".np-row:backdrop"));
             assert!(glass_colors(theme).is_some());
         }
         for theme in [Theme::Light, Theme::Dark, Theme::System] {

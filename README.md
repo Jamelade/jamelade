@@ -43,11 +43,13 @@ biography without leaving the page.
 
 Jamelade follows synchronized lyrics while keeping the selected Jamkin visible.
 It tries Apple Music first. LRCLIB and Lyrics.ovh are independent, off-by-
-default fallbacks; Jamelade contacts only sources the user has enabled and
-stops at the first usable result. Successful results stay in memory.
+default fallbacks; Jamelade contacts only sources the user has enabled. An
+enabled LRCLIB may upgrade plain Apple lyrics to a verified synchronized match;
+Lyrics.ovh is used only when earlier sources have no text. Results stay in memory.
 When Apple supplies a translation or romanization, it appears as a selectable
-variant. A per-song timing offset can correct early or late synchronized lyrics
-without storing titles or artists.
+variant. If LRCLIB supplies the missing clock and its original lines exactly
+match Apple's, the Apple variants inherit that clock. A per-song timing offset
+can correct early or late synchronized lyrics without storing titles or artists.
 [Lyrics sources](docs/LYRICS_SOURCES.md) explains what each provider receives.
 
 ### Jamkin companions
@@ -84,13 +86,13 @@ on later launches. Jamkin features are local and account-free.
 
 ### Album-aware glass
 
-The player, navigation, and controls derive their palette from the current
-cover art. Blur and transparency are adjustable, while the selected Jamkin
-provides a consistent accent palette. The control blends continuously from
-blurred glass to clear artwork, with adaptive foreground contrast near the
-clear end. Playlist artwork that Apple does not supply is composed locally
-from the playlist's album covers. Jamelade follows the desktop's normal
-interface font and does not bundle or select Apple's SF Pro.
+The main window can derive its palette from the current cover art. Blur and
+transparency are adjustable, while the selected Jamkin provides a consistent
+accent palette. The compact and expanded players keep the selected theme as
+stable, readable surfaces. Playlist artwork that Apple does not supply is
+composed locally from the playlist's album covers. Jamelade uses SF Pro Display
+when it is already installed and otherwise falls back to the desktop's normal
+sans-serif font. It does not bundle Apple's font.
 
 ### Native navigation, links, and focused looping
 
@@ -173,21 +175,21 @@ launcher entry, and has no network access. Remove it with
 
 ## Install
 
-The [Jamelade 1.0 release](https://github.com/Jamelade/jamelade/releases/tag/v1.0.0)
-provides an x86_64 Flatpak and AppImage with checksums. **Flatpak is the
-recommended package** because it adds an outer application sandbox:
+Jamelade release packages are available on the
+[releases page](https://github.com/Jamelade/jamelade/releases). **Flatpak is
+recommended** because it adds an outer application sandbox:
 
 ```bash
 sha256sum --ignore-missing -c SHA256SUMS
-flatpak install --user ./Jamelade-1.0.0-x86_64.flatpak
+flatpak install --user ./Jamelade-2.0.0-x86_64.flatpak
 ```
 
 The secondary AppImage targets Ubuntu 24.04 or newer and contemporary Fedora:
 
 ```bash
 sha256sum --ignore-missing -c SHA256SUMS
-chmod +x Jamelade-1.0.0-x86_64.AppImage
-./Jamelade-1.0.0-x86_64.AppImage
+chmod +x Jamelade-2.0.0-x86_64.AppImage
+./Jamelade-2.0.0-x86_64.AppImage
 ```
 
 The AppImage keeps Chromium's renderer sandbox enabled but, like any native
@@ -199,10 +201,6 @@ To build the Flatpak from source, install the tools and runtimes in
 [`packaging/flatpak/README.md`](packaging/flatpak/README.md), then run
 `make flatpak-bundle`. Both packages download Widevine through Chromium on
 first use; Widevine is absent from the source and release artifacts.
-
-The older
-[0.10 beta bundle](https://github.com/Jamelade/jamelade/releases/tag/v0.10.0-beta.1)
-remains available for testing, but it predates the 1.0 browser-broker design.
 
 ### Requirements
 

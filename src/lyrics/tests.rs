@@ -8,7 +8,7 @@ fn candidate(title: &str, artist: &str, album: &str, duration: f64, synced: &str
         track_name: title.into(),
         artist_name: artist.into(),
         album_name: album.into(),
-        duration,
+        duration: Some(duration),
         instrumental: false,
         plain_lyrics: Some("plain".into()),
         synced_lyrics: Some(synced.into()),
@@ -67,6 +67,114 @@ fn provider_results_keep_attribution_in_the_memory_cache_value() {
 }
 
 #[test]
+fn synchronized_result_upgrades_but_plain_result_does_not_replace_first_party_text() {
+    let mut plain = Some(Lyrics {
+        lines: vec![Line {
+            at_ms: None,
+            text: "Apple plain".into(),
+        }],
+        source: Some(Provider::AppleMusic),
+        ..Lyrics::default()
+    });
+    let later_plain = Lyrics {
+        lines: vec![Line {
+            at_ms: None,
+            text: "Fallback plain".into(),
+        }],
+        source: Some(Provider::Lrclib),
+        ..Lyrics::default()
+    };
+    assert!(synchronized_or_hold(later_plain, &mut plain).is_none());
+    assert_eq!(plain.as_ref().unwrap().source, Some(Provider::AppleMusic));
+
+    let synced = lyrics_from_wire(&candidate("Song", "Artist", "Album", 120.0, "[00:01]Live"));
+    assert_eq!(
+        synchronized_or_hold(synced, &mut plain).unwrap().source,
+        Some(Provider::Lrclib)
+    );
+}
+
+#[test]
+fn a_verified_fallback_clock_keeps_first_party_original_and_romanization() {
+    let mut plain = Some(Lyrics {
+        lines: vec![
+            Line {
+                at_ms: None,
+                text: "First, line".into(),
+            },
+            Line {
+                at_ms: None,
+                text: "Second line".into(),
+            },
+        ],
+        source: Some(Provider::AppleMusic),
+        variants: vec![LyricVariant {
+            kind: LyricVariantKind::Romanization,
+            label: "Romanized · xx-Latn".into(),
+            lines: vec![
+                Line {
+                    at_ms: None,
+                    text: "Roman one".into(),
+                },
+                Line {
+                    at_ms: None,
+                    text: "Roman two".into(),
+                },
+            ],
+            synced: false,
+        }],
+        ..Lyrics::default()
+    });
+    let synchronized = lyrics_from_wire(&candidate(
+        "Song",
+        "Artist",
+        "Album",
+        120.0,
+        "[00:01]First line\n[00:03]Second line",
+    ));
+
+    let merged = synchronized_or_hold(synchronized, &mut plain).unwrap();
+    assert_eq!(merged.source, Some(Provider::Lrclib));
+    assert_eq!(merged.lines[0].text, "First, line");
+    assert_eq!(merged.lines[1].at_ms, Some(3_000));
+    assert_eq!(merged.variants.len(), 1);
+    assert!(merged.variants[0].synced);
+    assert_eq!(merged.variants[0].lines[0].at_ms, Some(1_000));
+}
+
+#[test]
+fn a_mismatched_fallback_clock_never_times_first_party_variants() {
+    let mut plain = Some(Lyrics {
+        lines: vec![Line {
+            at_ms: None,
+            text: "Different words".into(),
+        }],
+        source: Some(Provider::AppleMusic),
+        variants: vec![LyricVariant {
+            kind: LyricVariantKind::Romanization,
+            label: "Romanized".into(),
+            lines: vec![Line {
+                at_ms: None,
+                text: "Roman".into(),
+            }],
+            synced: false,
+        }],
+        ..Lyrics::default()
+    });
+    let synchronized = lyrics_from_wire(&candidate(
+        "Song",
+        "Artist",
+        "Album",
+        120.0,
+        "[00:01]Other words",
+    ));
+
+    let result = synchronized_or_hold(synchronized, &mut plain).unwrap();
+    assert!(result.variants.is_empty());
+    assert_eq!(result.lines[0].text, "Other words");
+}
+
+#[test]
 fn apple_line_ttml_becomes_synchronized_native_lines() {
     let ttml = r#"<?xml version="1.0" encoding="UTF-8"?>
         <tt xmlns="http://www.w3.org/ns/ttml"
@@ -84,6 +192,55 @@ fn apple_line_ttml_becomes_synchronized_native_lines() {
     assert_eq!(lyrics.lines[0].at_ms, Some(3_250));
     assert_eq!(lyrics.lines[1].at_ms, Some(62_500));
     assert_eq!(lyrics.lines[1].text, "Second line");
+}
+
+#[test]
+fn apple_metadata_stays_out_of_the_song_and_exposes_complete_localizations() {
+    let ttml = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <tt xmlns="http://www.w3.org/ns/ttml"
+            xmlns:itunes="http://music.apple.com/lyric-ttml-internal"
+            itunes:timing="Line">
+          <head><metadata><iTunesMetadata>
+            <translations>
+              <translation xml:lang="de-DE">
+                <text for="L1">Erste Zeile</text>
+                <text for="L2">Zweite Zeile</text>
+              </translation>
+            </translations>
+            <transliterations>
+              <transliteration xml:lang="ja-Latn">
+                <p for="L1">Hajime no gyou</p>
+                <p for="L2">Tsugi no gyou</p>
+              </transliteration>
+            </transliterations>
+          </iTunesMetadata></metadata></head>
+          <body><div>
+            <p itunes:key="L1" begin="00:00:03.250">最初の行</p>
+            <p itunes:key="L2" begin="00:00:06.500">次の行</p>
+          </div></body>
+        </tt>"#;
+    let lyrics = lyrics_from_apple_ttml(ttml).unwrap();
+
+    assert!(lyrics.synced);
+    assert_eq!(lyrics.lines.len(), 2);
+    assert_eq!(lyrics.lines[0].text, "最初の行");
+    assert_eq!(lyrics.variants.len(), 2);
+    let translation = lyrics
+        .variants
+        .iter()
+        .find(|variant| variant.kind == LyricVariantKind::Translation)
+        .unwrap();
+    assert_eq!(translation.label, "Translation · de-DE");
+    assert_eq!(translation.lines[0].text, "Erste Zeile");
+    assert_eq!(translation.lines[1].at_ms, Some(6_500));
+    let romanized = lyrics
+        .variants
+        .iter()
+        .find(|variant| variant.kind == LyricVariantKind::Romanization)
+        .unwrap();
+    assert_eq!(romanized.label, "Romanized · ja-Latn");
+    assert_eq!(romanized.lines[0].text, "Hajime no gyou");
+    assert!(romanized.synced);
 }
 
 #[test]
@@ -180,6 +337,14 @@ fn malformed_synchronized_candidates_are_not_claimed_as_live() {
         200.0,
         "not timestamped",
     )];
+    assert!(choose_synced(&query, candidates).is_none());
+}
+
+#[test]
+fn a_null_duration_candidate_does_not_break_the_whole_search_response() {
+    let raw = r#"[{"trackName":"Song","artistName":"Artist","albumName":"Album","duration":null,"syncedLyrics":"[00:01]Line"}]"#;
+    let candidates: Vec<WireLyrics> = serde_json::from_str(raw).unwrap();
+    let query = Query::new(None, "Song", "Artist", "Album", 120_000).unwrap();
     assert!(choose_synced(&query, candidates).is_none());
 }
 

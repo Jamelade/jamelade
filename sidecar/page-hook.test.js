@@ -99,7 +99,11 @@ test('the browser broker permits named Apple routes and refuses arbitrary URLs',
   const app = harness()
   app.send({ cmd: 'apiRequest', requestId: 7, method: 'get', path: '/catalog/de/albums/123?include=tracks' })
   app.send({ cmd: 'apiRequest', requestId: 9, method: 'get', path: '/catalog/de/artists/1234567890?include=albums&extend=editorialNotes' })
+  app.send({ cmd: 'apiRequest', requestId: 10, method: 'get', path: '/catalog/de/songs/1000000001?include=credits' })
+  app.send({ cmd: 'apiRequest', requestId: 12, method: 'get', path: '/catalog/de/songs/1000000001/syllable-lyrics?extend=ttmlLocalizations' })
   app.send({ cmd: 'apiRequest', requestId: 8, method: 'get', path: '//example.com/collect' })
+  app.send({ cmd: 'apiRequest', requestId: 11, method: 'get', path: '/catalog/de/songs/1000000001/view/credits' })
+  app.send({ cmd: 'apiRequest', requestId: 13, method: 'get', path: '/catalog/de/songs/1000000001/lyrics' })
   await new Promise((resolve) => setImmediate(resolve))
 
   // Bodies originate in the VM realm; round-trip them so prototype identity
@@ -113,12 +117,24 @@ test('the browser broker permits named Apple routes and refuses arbitrary URLs',
       method: 'get',
       path: '/v1/catalog/de/artists/1234567890?include=albums&extend=editorialNotes',
     },
+    {
+      method: 'get',
+      path: '/v1/catalog/de/songs/1000000001?include=credits',
+    },
+    {
+      method: 'get',
+      path: '/v1/catalog/de/songs/1000000001/syllable-lyrics?extend=ttmlLocalizations',
+    },
   ])
   const accepted = app.events.find((event) => event.event === 'api-response' && event.requestId === 7)
   assert.equal(accepted.status, 200)
   assert.deepEqual(JSON.parse(accepted.body), { data: [{ id: '123', type: 'albums' }] })
   const refused = app.events.find((event) => event.event === 'api-response' && event.requestId === 8)
   assert.equal(refused.status, 400)
+  const obsolete = app.events.find((event) => event.event === 'api-response' && event.requestId === 11)
+  assert.equal(obsolete.status, 400)
+  const oldLyrics = app.events.find((event) => event.event === 'api-response' && event.requestId === 13)
+  assert.equal(oldLyrics.status, 400)
 })
 
 test('the browser broker waits for MusicKit API startup instead of failing the library', async () => {

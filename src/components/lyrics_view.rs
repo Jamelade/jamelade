@@ -222,6 +222,8 @@ impl LyricsView {
             .build();
         let variant_picker = gtk::DropDown::builder()
             .halign(gtk::Align::Start)
+            .valign(gtk::Align::Center)
+            .css_classes(["lyrics-tool-picker"])
             .tooltip_text("Choose an Apple-provided lyric version")
             .visible(false)
             .build();
@@ -237,6 +239,8 @@ impl LyricsView {
         let timing_row = gtk::Box::builder()
             .spacing(2)
             .halign(gtk::Align::Start)
+            .valign(gtk::Align::Center)
+            .css_classes(["lyrics-tool-pill"])
             .visible(false)
             .build();
         let earlier = gtk::Button::builder()
@@ -267,6 +271,15 @@ impl LyricsView {
         timing_row.append(&earlier);
         timing_row.append(&reset);
         timing_row.append(&later);
+        let lyric_tools = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .halign(gtk::Align::Start)
+            .valign(gtk::Align::Center)
+            .spacing(8)
+            .css_classes(["lyrics-tools"])
+            .build();
+        lyric_tools.append(&variant_picker);
+        lyric_tools.append(&timing_row);
         let companion_actor = JamkinActor::new(companion, 142, quality);
         companion_actor.set_reduced_motion(reduced_motion);
         let companion_name = gtk::Label::builder()
@@ -282,8 +295,7 @@ impl LyricsView {
             .build();
         companion_copy.append(&companion_name);
         companion_copy.append(&source);
-        companion_copy.append(&variant_picker);
-        companion_copy.append(&timing_row);
+        companion_copy.append(&lyric_tools);
 
         // This stage lives outside the lyrics scroller. It is deliberately a
         // plain layout rather than a card: transparent companion art can read

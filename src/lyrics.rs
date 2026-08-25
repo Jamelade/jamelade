@@ -10,7 +10,6 @@
 //! only after that provider is enabled. Sources are tried one at a time and the
 //! first useful answer wins, avoiding needless disclosure to every enabled
 //! service.
-
 use anyhow::{Context, Result};
 use reqwest::{Client, StatusCode, header};
 use serde::Deserialize;
@@ -168,6 +167,73 @@ impl Lyrics {
     }
 }
 
+fn synchronized_or_hold(mut lyrics: Lyrics, plain: &mut Option<Lyrics>) -> Option<Lyrics> {
+    if lyrics.synced {
+        if let Some(first_party) = plain.as_ref() {
+            inherit_verified_timeline(&mut lyrics, first_party);
+        }
+        return Some(lyrics);
+    }
+    if lyrics.instrumental && plain.is_none() {
+        return Some(lyrics);
+    }
+    if !lyrics.lines.is_empty() && plain.is_none() {
+        *plain = Some(lyrics);
+    }
+    None
+}
+
+/// Keep Apple's original and localized text when a separately enabled LRCLIB
+/// result supplies the missing line clock. The timeline is inherited only
+/// when every normalized original line agrees at the same index; any split,
+/// merge or mismatch leaves the two providers separate rather than attaching
+/// plausible-looking timestamps to the wrong words.
+fn inherit_verified_timeline(synchronized: &mut Lyrics, first_party: &Lyrics) {
+    if !synchronized.synced
+        || synchronized.source != Some(Provider::Lrclib)
+        || first_party.source != Some(Provider::AppleMusic)
+        || first_party.lines.is_empty()
+        || synchronized.lines.len() != first_party.lines.len()
+        || !synchronized
+            .lines
+            .iter()
+            .zip(&first_party.lines)
+            .all(|(timed, apple)| normalized(&timed.text) == normalized(&apple.text))
+    {
+        return;
+    }
+
+    let timestamps: Vec<Option<u64>> = synchronized.lines.iter().map(|line| line.at_ms).collect();
+    synchronized.lines = first_party
+        .lines
+        .iter()
+        .zip(&timestamps)
+        .map(|(line, at_ms)| Line {
+            at_ms: *at_ms,
+            text: line.text.clone(),
+        })
+        .collect();
+    synchronized.variants = first_party
+        .variants
+        .iter()
+        .filter(|variant| variant.lines.len() == timestamps.len())
+        .map(|variant| LyricVariant {
+            kind: variant.kind,
+            label: variant.label.clone(),
+            lines: variant
+                .lines
+                .iter()
+                .zip(&timestamps)
+                .map(|(line, at_ms)| Line {
+                    at_ms: *at_ms,
+                    text: line.text.clone(),
+                })
+                .collect(),
+            synced: timestamps.iter().all(Option::is_some),
+        })
+        .collect();
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WireLyrics {
@@ -178,7 +244,7 @@ struct WireLyrics {
     #[serde(default)]
     album_name: String,
     #[serde(default)]
-    duration: f64,
+    duration: Option<f64>,
     #[serde(default)]
     instrumental: bool,
     plain_lyrics: Option<String>,
@@ -193,10 +259,10 @@ struct LyricsOvhWire {
 
 /// Ask available providers for one track, in privacy-preserving priority order.
 ///
-/// Apple Music goes first and reuses the existing authenticated client. LRCLIB
-/// and Lyrics.ovh follow only when separately enabled and Apple had no usable
-/// answer. A successful empty response beats a transport error from another
-/// provider, so "not found" does not become an alarming failure page.
+/// Apple Music goes first and reuses the existing authenticated client. An
+/// enabled LRCLIB may upgrade a plain Apple result to synchronized lyrics;
+/// otherwise the first useful result stays preferred. A successful empty
+/// response beats a transport error, so "not found" is not an alarming error.
 pub async fn fetch(
     query: &Query,
     providers: Providers,
@@ -215,12 +281,13 @@ pub async fn fetch(
 
     let mut had_response = false;
     let mut last_error = None;
+    let mut plain = None;
 
     if let (Some(client), Some(catalog_id)) = (apple.as_ref(), query.catalog_id.as_deref()) {
         match client.lyrics(catalog_id).await {
             Ok(Some(lyrics)) => {
                 had_response = true;
-                if lyrics.instrumental || !lyrics.lines.is_empty() {
+                if let Some(lyrics) = synchronized_or_hold(lyrics, &mut plain) {
                     return Ok(lyrics);
                 }
             }
@@ -237,7 +304,7 @@ pub async fn fetch(
         match fetch_lrclib(&client, query).await {
             Ok(lyrics) => {
                 had_response = true;
-                if lyrics.instrumental || !lyrics.lines.is_empty() {
+                if let Some(lyrics) = synchronized_or_hold(lyrics, &mut plain) {
                     return Ok(lyrics);
                 }
             }
@@ -245,7 +312,7 @@ pub async fn fetch(
         }
     }
 
-    if providers.lyrics_ovh {
+    if plain.is_none() && providers.lyrics_ovh {
         match fetch_lyrics_ovh(&client, query).await {
             Ok(lyrics) => {
                 had_response = true;
@@ -257,6 +324,9 @@ pub async fn fetch(
         }
     }
 
+    if let Some(lyrics) = plain {
+        return Ok(lyrics);
+    }
     if had_response {
         Ok(Lyrics::default())
     } else {
@@ -349,28 +419,31 @@ fn choose_synced(query: &Query, candidates: Vec<WireLyrics>) -> Option<WireLyric
 
     candidates
         .into_iter()
-        .filter(|candidate| {
-            !candidate.instrumental
+        .filter_map(|candidate| {
+            let candidate_duration = candidate.duration?;
+            (!candidate.instrumental
                 && normalized(&candidate.track_name) == title
                 && normalized(&candidate.artist_name) == artist
-                && candidate.duration.is_finite()
-                && (candidate.duration - duration).abs() <= SEARCH_DURATION_TOLERANCE_SECS
+                && candidate_duration.is_finite()
+                && (candidate_duration - duration).abs() <= SEARCH_DURATION_TOLERANCE_SECS
                 && candidate
                     .synced_lyrics
                     .as_deref()
-                    .is_some_and(|raw| !parse_lrc(raw).is_empty())
+                    .is_some_and(|raw| !parse_lrc(raw).is_empty()))
+            .then_some((candidate, candidate_duration))
         })
-        .min_by(|left, right| {
+        .min_by(|(left, left_duration), (right, right_duration)| {
             // Prefer the same album, then the closest duration. Stable input
             // order breaks the vanishingly unlikely exact tie.
             let left_album = normalized(&left.album_name) == album;
             let right_album = normalized(&right.album_name) == album;
             right_album.cmp(&left_album).then_with(|| {
-                (left.duration - duration)
+                (*left_duration - duration)
                     .abs()
-                    .total_cmp(&(right.duration - duration).abs())
+                    .total_cmp(&(*right_duration - duration).abs())
             })
         })
+        .map(|(candidate, _)| candidate)
 }
 
 async fn get_json<T>(

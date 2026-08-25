@@ -5,9 +5,10 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 # Lyrics sources
 
-Jamelade tries sources sequentially and stops at the first usable result.
-Successful or empty results stay in a bounded memory cache and are never
-written as listening history.
+Jamelade tries sources sequentially. Apple remains the first choice; when it
+returns only plain lyrics, an enabled LRCLIB may replace them with a verified
+synchronized match. Lyrics.ovh is contacted only when no earlier source has
+usable text. Results stay in bounded memory and are never listening history.
 
 | Source | Default | Data sent |
 | --- | --- | --- |
@@ -16,9 +17,12 @@ written as listening history.
 | Lyrics.ovh | Off | Artist, title, and IP address; the service may query downstream lyric sites |
 
 Apple-provided translations and romanizations appear as selectable variants
-when present in the same bounded first-party response. Jamelade does not call a
-translation service. A manual timing correction is stored locally as a numeric
-catalogue ID and offset; lyric text, title, and artist are not written.
+when present in the same bounded first-party response. When an LRCLIB timeline
+matches every normalized Apple original line at the same index, Jamelade can
+apply those timestamps to Apple's variants; a mismatch stays separate and is
+never guessed. Jamelade does not call a translation service. A manual timing
+correction is stored locally as a numeric catalogue ID and offset; lyric text,
+title, and artist are not written.
 
 Each third-party source requires its own consent. Its HTTP client has no Apple
 header, cookie, token, account ID, or redirect permission. Apple JSON is capped

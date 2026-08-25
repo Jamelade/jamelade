@@ -21,7 +21,7 @@ use relm4::gtk;
 use relm4::prelude::*;
 
 use super::{PlayerView, PlayerViewInput};
-use crate::components::now_playing::{Repeat, VOLUME_STEP, mode_opacity, volume_is_new};
+use crate::components::now_playing::{Repeat, VOLUME_STEP, volume_is_new};
 use crate::music::types::format_duration;
 use crate::segment_loop::LoopMarks;
 
@@ -88,8 +88,10 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
     // own header carries them once it is open, and two live copies of one
     // control on screen at once is the redundancy this drawer keeps avoiding.
     let shuffle = button("media-playlist-shuffle-symbolic", ["flat", "circular"]);
+    shuffle.add_css_class("player-state-control");
     shuffle.set_tooltip_text(Some("Shuffle"));
     let repeat = button("media-playlist-repeat-symbolic", ["flat", "circular"]);
+    repeat.add_css_class("player-state-control");
     let previous = button("media-skip-backward-symbolic", ["flat", "circular"]);
     let play = button(
         "media-playback-start-symbolic",
@@ -107,23 +109,27 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
         .tooltip_text("Queue")
         .css_classes(["flat", "circular"])
         .build();
+    queue.add_css_class("player-state-control");
     let segment_loop = gtk::Button::builder()
         .label("A–B")
         .tooltip_text("Loop a section: set point A")
         .css_classes(["flat", "pill", "segment-loop"])
         .build();
+    segment_loop.add_css_class("player-state-control");
     let copy_link = button("edit-copy-symbolic", ["flat", "circular"]);
+    copy_link.add_css_class("player-state-control");
     copy_link.set_tooltip_text(Some("Copy Apple Music link"));
     let lyrics = button("format-justify-left-symbolic", ["flat", "circular"]);
+    lyrics.add_css_class("player-state-control");
     lyrics.set_tooltip_text(Some("Lyrics"));
     let favorite = button("starred-symbolic", ["flat", "circular"]);
-    let credits = button("avatar-default-symbolic", ["flat", "circular"]);
-    credits.set_tooltip_text(Some("Song credits"));
+    favorite.add_css_class("player-state-control");
     let sleep_timer = gtk::MenuButton::builder()
         .icon_name("alarm-symbolic")
         .tooltip_text("Sleep timer")
         .css_classes(["flat", "circular"])
         .build();
+    sleep_timer.add_css_class("player-state-control");
     let sleep_box = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(2)
@@ -163,6 +169,7 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
         .css_classes(["flat", "circular"])
         .adjustment(&gtk::Adjustment::new(1.0, 0.0, 1.0, VOLUME_STEP, 0.1, 0.0))
         .build();
+    volume.add_css_class("player-state-control");
     // The id is kept, not discarded: `refresh` blocks this handler while it
     // writes. See the note there.
     let volume_handler = {
@@ -198,11 +205,6 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
         let sender = sender.clone();
         favorite.connect_clicked(move |_| sender.input(PlayerViewInput::ToggleFavorite));
     }
-    {
-        let sender = sender.clone();
-        credits.connect_clicked(move |_| sender.input(PlayerViewInput::ShowCredits));
-    }
-
     for (widget, msg) in [
         (&previous, PlayerViewInput::Previous),
         (&play, PlayerViewInput::PlayPause),
@@ -214,14 +216,18 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
         widget.connect_clicked(move |_| sender.input(msg.clone()));
     }
 
-    // Play is in the middle either way: five with the modes, three without,
-    // and a hidden widget takes no space.
+    // Sleep belongs with playback modes, next to shuffle. A same-width empty
+    // cell on the far side keeps Play geometrically centred without putting a
+    // second timer control on screen.
+    let sleep_balance = gtk::Box::builder().width_request(34).build();
     for w in [
+        sleep_timer.upcast_ref::<gtk::Widget>(),
         shuffle.upcast_ref::<gtk::Widget>(),
         previous.upcast_ref(),
         play.upcast_ref(),
         next.upcast_ref(),
         repeat.upcast_ref(),
+        sleep_balance.upcast_ref(),
     ] {
         buttons.append(w);
     }
@@ -240,8 +246,6 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
     queue_row.attach(&lyrics, 3, 0, 1, 1);
     queue_row.attach(&copy_link, 4, 0, 1, 1);
     queue_row.attach(&volume, 5, 0, 1, 1);
-    queue_row.attach(&sleep_timer, 6, 0, 1, 1);
-    queue_row.attach(&credits, 7, 0, 1, 1);
     into.append(&queue_row);
 
     Bits {
@@ -257,10 +261,10 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
         shuffle,
         repeat,
         segment_loop,
+        lyrics,
         copy_link,
         favorite,
         sleep_timer,
-        credits,
         shown_loop: std::cell::Cell::new(LoopMarks::Off),
     }
 }
@@ -279,10 +283,10 @@ pub(super) struct Bits {
     shuffle: gtk::Button,
     repeat: gtk::Button,
     segment_loop: gtk::Button,
+    lyrics: gtk::Button,
     copy_link: gtk::Button,
     favorite: gtk::Button,
     sleep_timer: gtk::MenuButton,
-    credits: gtk::Button,
     shown_loop: std::cell::Cell<LoopMarks>,
 }
 
@@ -316,29 +320,24 @@ impl PlayerView {
         });
         bits.play.set_sensitive(self.snap.active);
         bits.previous.set_sensitive(self.snap.has_previous);
-        bits.shuffle.set_opacity(mode_opacity(self.snap.shuffle));
+        set_control_active(&bits.shuffle, self.snap.shuffle);
         bits.repeat.set_icon_name(match self.snap.repeat {
             Repeat::One => "media-playlist-repeat-song-symbolic",
             _ => "media-playlist-repeat-symbolic",
         });
-        bits.repeat
-            .set_opacity(mode_opacity(!matches!(self.snap.repeat, Repeat::Off)));
+        set_control_active(&bits.repeat, !matches!(self.snap.repeat, Repeat::Off));
         bits.segment_loop.set_sensitive(self.snap.duration_ms > 0);
         bits.copy_link.set_sensitive(self.snap.catalog_id.is_some());
         bits.favorite.set_sensitive(self.snap.catalog_id.is_some());
         bits.sleep_timer.set_sensitive(self.snap.active);
-        bits.credits.set_sensitive(self.snap.catalog_id.is_some());
-        bits.favorite.set_opacity(mode_opacity(self.snap.favorite));
+        set_control_active(&bits.queue, self.snap.queue_open);
+        set_control_active(&bits.lyrics, self.snap.lyrics_open);
+        set_control_active(&bits.favorite, self.snap.favorite);
         bits.favorite.set_tooltip_text(Some(if self.snap.favorite {
             "Remove favourite"
         } else {
             "Favourite"
         }));
-        if self.snap.favorite {
-            bits.favorite.add_css_class("favorite-star");
-        } else {
-            bits.favorite.remove_css_class("favorite-star");
-        }
         bits.next.set_sensitive(self.snap.has_next);
         // **Silenced while we write.** GTK cannot tell a programmatic write
         // from a drag, and `sender.input` queues — so an unsilenced write comes
@@ -357,8 +356,7 @@ impl PlayerView {
         let Some(bits) = self.bits.as_ref() else {
             return;
         };
-        bits.segment_loop
-            .set_opacity(mode_opacity(!matches!(marks, LoopMarks::Off)));
+        set_control_active(&bits.segment_loop, !matches!(marks, LoopMarks::Off));
         match marks {
             LoopMarks::Off => {
                 bits.segment_loop.set_label("A–B");
@@ -403,12 +401,20 @@ impl PlayerView {
         let Some(bits) = self.bits.as_ref() else {
             return;
         };
-        bits.sleep_timer.set_opacity(mode_opacity(active));
+        set_control_active(&bits.sleep_timer, active);
         bits.sleep_timer.set_tooltip_text(Some(if active {
             "Sleep timer is active"
         } else {
             "Sleep timer"
         }));
+    }
+}
+
+fn set_control_active(widget: &impl IsA<gtk::Widget>, active: bool) {
+    if active {
+        widget.add_css_class("player-control-active");
+    } else {
+        widget.remove_css_class("player-control-active");
     }
 }
 

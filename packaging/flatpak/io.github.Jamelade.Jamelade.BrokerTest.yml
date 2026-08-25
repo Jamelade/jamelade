@@ -65,7 +65,7 @@ modules:
       env:
         CARGO_HOME: /run/build/jamelade/cargo
         # Fixed build time plus remapped paths improve reproducibility.
-        SOURCE_DATE_EPOCH: '1787529600'
+        SOURCE_DATE_EPOCH: '1787616000'
         CARGO_INCREMENTAL: '0'
         RUSTFLAGS: '--remap-path-prefix=/run/build/jamelade=/usr/src/jamelade'
         # Public routing ID; not a Discord secret or token.

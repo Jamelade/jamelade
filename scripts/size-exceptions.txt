@@ -6,7 +6,7 @@
 # needs to be a deliberate line in a diff.
 #
 # path                              max   why
-src/app/mod.rs                      4418  # the model, the messages, `view!` and both reducers.
+src/app/mod.rs                      4410  # the model, the messages, `view!` and both reducers.
                                           # Playlist tools, timers, credits, portals, scrobbling,
                                           # lyric variants and timing cross the root state here;
                                           # their I/O and widgets remain in focused modules.
@@ -136,6 +136,8 @@ src/app/mod.rs                      4418  # the model, the messages, `view!` and
                                           # 3756 -> 3802: opacity, Jamkin motion, lyric scale and
                                           # background-visibility preferences cross as four bounded
                                           # messages/reducer arms; each renderer remains outside.
+                                          # 4418 -> 4426: one shared four-second toast constructor
+                                          # keeps ordinary notices transient; decisions remain dialogs.
 src/app/chrome.rs                   1078  # menus and the dialogs they open. Jamelade's companion
                                           # Credits and the opt-in connection/language rows use
                                           # native dialogs; their behavior remains elsewhere.
@@ -198,13 +200,17 @@ src/components/jamkin_mode.rs        761  # the two compositor-specific Jamkin s
                                           # 679 -> 761: one settings snapshot and live setters add
                                           # opacity, reduced motion and main-window visibility to both
                                           # surfaces without duplicating compositor logic.
-src/components/lyrics_view.rs        732  # one native synchronized-lyrics surface and its bounded
+src/components/lyrics_view.rs        744  # one native synchronized-lyrics surface and its bounded
                                           # First-party variant choice and a bounded local timing
                                           # correction belong beside the lyric clock they alter.
+                                          # 732 -> 744: the two existing lyric tools share one compact
+                                          # visual row instead of drifting apart vertically.
                                           # temporal animation state. Timed labels are now accessible
                                           # seek buttons while unsynced text remains selectable.
                                           # 619 -> 625: reduced motion is applied live to the existing
                                           # Jamkin actor; lyric animation remains in this component.
+src/lyrics.rs                         660  # provider ordering, bounded parsing and exact-match timeline
+                                          # inheritance form one privacy boundary; parser tests remain split.
 src/components/detail_page.rs        658  # one album/artist/playlist detail surface. Playlist export
                                           # adds a fixed three-format menu and hands data to its
                                           # separate bounded renderer.
@@ -234,13 +240,18 @@ src/components/now_playing.rs       1116  # one component, and the one whose see
                                           # active page so that same button can stand down there.
                                           # 1103 -> 1109: the snapshot carries the playing catalog id
                                           # and exposes bounded link/navigation intents.
-src/music/client.rs                 2053  # one endpoint per method against one API. Long because
+src/music/client.rs                 2081  # one endpoint per method against one API. Long because
                                           # Documented playlist writes, bounded credits and optional
                                           # first-party lyric variants stay at the Apple boundary.
                                           # Apple is, and each method is short.
-                                          # 1704 -> 1715: idempotent GETs retry only 502/503/504
-                                          # twice; the status classifier and regression stay beside
-                                          # the sole authenticated request method.
+                                          # 2053 -> 2057: bounded backoff covers a browser session
+                                          # resuming slowly; only idempotent 502/503/504 GETs retry.
+                                          # The policy stays beside the sole authenticated request.
+                                          # 2057 -> 2073: current Apple credits are a nested song
+                                          # relationship; its bounded flattening stays at this boundary.
+                                          # 2073 -> 2081: lyrics use Apple's current syllable endpoint,
+                                          # request its bounded localization payload, and safely fall
+                                          # back when Apple supplies a null localization field.
                                           # 1624 -> 1704: the public artist top-songs and latest-release
                                           # views are best-effort beside the existing album relationship.
                                           # 980 -> 1020: `song_containers`. A queue item carries no
@@ -338,9 +349,12 @@ src/player/protocol.rs               952  # the whole sidecar contract in one fi
                                           # booleans now cross for session state; Apple credentials do not.
                                           # 913 -> 931: HTTP status is range-checked at the protocol
                                           # boundary, with malformed-status and oversized-body tests.
-src/components/player_view/mod.rs   1049  # the model, `view!` and the reducer. The transport
+src/components/player_view/mod.rs   1080  # the model, `view!` and the reducer. The transport
                                           # Sleep-timer state and credits forward through the one
                                           # expanded-player model.
+                                          # 1049 -> 1069: credits sits beside the song title; its
+                                          # existing intent and dialog remain unchanged.
+                                          # 1069 -> 1070: credits joins the shared control-state style.
                                           # moved to a child module — see its header for why a
                                           # child and not a sibling. 870 before the split; this
                                           # number comes down as the ratchet intends, and is the
@@ -365,8 +379,10 @@ src/components/player_view/mod.rs   1049  # the model, `view!` and the reducer. 
                                           # the empty transport slot no longer claiming spacing.
                                           # 890 -> 935: separate accent-coloured artist and album links
                                           # replace the ambiguous combined subtitle.
-src/style.rs                        1574  # the accent, and the cover behind the whole window. The only
+src/style.rs                        1486  # the accent, and the cover behind the whole window. The only
                                           # CSS, and each rule argues for itself where it sits.
+                                          # 1574 -> 1486: both player surfaces return to the selected
+                                          # theme; the compact bar's duplicate blur path is gone.
                                           # 1524 -> 1574: the saved album-glass switch now gates both
                                           # cover pixels and extracted colours, retaining the latest
                                           # palette while named themes take over; regression tests pin
@@ -374,9 +390,6 @@ src/style.rs                        1574  # the accent, and the cover behind the
                                           # 1483 -> 1524: one replaceable named-theme provider and
                                           # inline artist-biography affordances. Palette values and
                                           # their tests are split into style/theme.rs.
-                                          # 1396 -> 1459: a second locally generated artwork path keeps
-                                          # the bottom player blurred at the otherwise clear endpoint;
-                                          # both paths share the existing bounded cross-fade and tests.
                                           # 1459 -> 1483: clickable player artwork and metadata gain
                                           # restrained hover and keyboard-focus affordances.
                                           # Over budget for one test: the backdrop must never carry
@@ -481,7 +494,7 @@ sidecar/main.js                      871  # the Electron process boundary: sandb
                                           # user-token fallback and no credential logging or new origin.
                                           # 860 -> 871: credential events are consumed inside the browser
                                           # process and reduced to credential-free session state for Rust.
-sidecar/page-hook.js                 930  # the injected MusicKit hook (rule 4), and the one file that is
+sidecar/page-hook.js                 928  # the injected MusicKit hook (rule 4), and the one file that is
                                           # Documented playlist writes are exact typed routes with
                                           # bounded bodies; no generic POST bridge was added.
                                           # deliberately defensive line by line: every property
@@ -510,7 +523,7 @@ sidecar/page-hook.js                 930  # the injected MusicKit hook (rule 4),
                                           # 713 -> 844: a route-allowlisted MusicKit broker keeps Apple
                                           # credentials in Chromium while returning capped JSON results.
                                           # It stays here because this is the only page-world MusicKit API.
-src/player/sidecar.rs                875  # the Rust/Electron process boundary. Bounded command/event
+src/player/sidecar.rs                888  # the Rust/Electron process boundary. Bounded command/event
                                           # Playlist text, IDs, counts and pending replies are
                                           # validated before they enter the browser process.
                                           # channels, rate windows and a capped line reader prevent a
@@ -522,11 +535,13 @@ src/player/sidecar.rs                875  # the Rust/Electron process boundary. 
                                           # 656 -> 806: bounded request IDs, pending slots and timeouts
                                           # route credential-free Apple responses without logging paths
                                           # or bodies. Keeping it here preserves one process boundary.
-src/components/artwork.rs            657  # the single artwork trust boundary plus its decode, atomic
+                                          # 875 -> 888: a three-permit API gate prevents eager library
+                                          # loads from flooding the single browser-owned transport.
+src/components/artwork.rs            639  # the single artwork trust boundary plus its decode, atomic
                                           # cache, blur and image tests. HTTPS/mzstatic validation,
                                           # redirect denial, streamed size limits, symlink checks and
                                           # URL-free errors belong beside the only fetch they protect.
                                           # 617 -> 639: the 100% endpoint writes a distinct full-size,
                                           # unblurred cache derivative; ordinary blur remains bounded.
-                                          # 639 -> 657: the bottom bar caps clarity at the default
-                                          # blur and a regression pins that local-only derivative.
+                                          # 657 -> 638: player surfaces no longer generate a duplicate
+                                          # backdrop; only the main-window derivative remains.

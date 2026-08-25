@@ -468,16 +468,12 @@ impl AppModel {
                     let backdrop = path
                         .as_deref()
                         .and_then(|path| artwork::backdrop(path, glass_strength));
-                    let bar_backdrop = path
-                        .as_deref()
-                        .and_then(|path| artwork::bar_backdrop(path, glass_strength));
                     let palette = path.as_deref().and_then(crate::palette::for_artwork);
                     CommandMsg::Artwork {
                         generation,
                         template: t,
                         path,
                         backdrop,
-                        bar_backdrop,
                         glass_strength,
                         palette,
                     }
@@ -486,7 +482,7 @@ impl AppModel {
             }
             None => {
                 self.art_path = None;
-                crate::style::set_track_visuals(None, None, None);
+                crate::style::set_track_visuals(None, None);
                 self.now_playing.emit(NowPlayingInput::ArtworkReady(None));
                 self.player_view.emit(PlayerViewInput::Artwork(None));
                 false
@@ -505,13 +501,11 @@ impl AppModel {
         let generation = self.account_generation;
         sender.oneshot_command(async move {
             let backdrop = artwork::backdrop(&source, glass_strength);
-            let bar_backdrop = artwork::bar_backdrop(&source, glass_strength);
             CommandMsg::GlassBackdrop {
                 generation,
                 source,
                 glass_strength,
                 backdrop,
-                bar_backdrop,
             }
         });
     }

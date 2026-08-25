@@ -53,9 +53,9 @@ playback, Chromium, and Widevine.
   authenticated client, waits a bounded three seconds when session readiness
   precedes API-method readiness, and emits capped responses plus
   credential-free session state.
-- `src/music/client.rs` retries only idempotent GETs, at most twice, after a
-  502/503/504 response. It never automatically repeats writes, authentication
-  failures, rate limits, or arbitrary statuses.
+- `src/music/client.rs` retries only idempotent GETs, four times with bounded
+  backoff, after a 502/503/504 response. It never automatically repeats writes,
+  authentication failures, rate limits, or arbitrary statuses.
 - `sidecar/security.js` restricts privileged Chromium navigation, network
   destinations, renderer events, and diagnostic text.
 - `sidecar/session-vault.js` validates Apple cookies and stores only an
@@ -63,8 +63,9 @@ playback, Chromium, and Widevine.
 - `src/private_storage.rs` provides bounded, no-follow reads and atomic
   user-only writes for library, playback, and preference data.
 - `src/lyrics.rs` parses Apple TTML as bounded streaming XML and uses a separate
-  credential-free HTTP client for independently opted-in fallbacks. Successful
-  lyrics remain in memory.
+  credential-free HTTP client for independently opted-in fallbacks. A fallback
+  clock reaches Apple localizations only after exact normalized line alignment;
+  successful lyrics remain in memory.
 - `src/lyric_timing.rs` stores only numeric catalogue IDs and bounded offsets;
   it never writes lyric text or listening metadata.
 - `src/scrobble.rs` is off by default, encrypts its token with the desktop

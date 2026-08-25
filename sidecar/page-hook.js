@@ -402,9 +402,7 @@ function allowedApiRoute(method, pathname) {
   if (parts.length === 4) return true
   if (!validApiId(parts[4])) return false
   if (parts.length === 5) return true
-  if (kind === 'songs' && parts.length === 6 && parts[5] === 'lyrics') return true
-  if (kind === 'songs' && parts.length === 7
-      && parts[5] === 'view' && parts[6] === 'credits') return true
+  if (kind === 'songs' && parts.length === 6 && parts[5] === 'syllable-lyrics') return true
   if (kind === 'playlists' && parts.length === 6 && parts[5] === 'tracks') return true
   return kind === 'artists'
     && parts.length === 7

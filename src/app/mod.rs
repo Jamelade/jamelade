@@ -845,9 +845,6 @@ pub enum CommandMsg {
         /// Carried here rather than in its own message because the cover and
         /// what is drawn from it must be applied together.
         backdrop: Option<PathBuf>,
-        /// A separately softened copy for the bottom player. It stays blurred
-        /// at the clear-art endpoint where `backdrop` becomes the full cover.
-        bar_backdrop: Option<PathBuf>,
         /// The slider value used to render `backdrop`. If it changed while the
         /// cover downloaded, the current variant is queued immediately after.
         glass_strength: u8,
@@ -862,7 +859,6 @@ pub enum CommandMsg {
         source: PathBuf,
         glass_strength: u8,
         backdrop: Option<PathBuf>,
-        bar_backdrop: Option<PathBuf>,
     },
     /// An album page's contents. Tagged with the page id: by the time this
     /// lands the user may have gone back, and filling a page that is no longer
@@ -2380,7 +2376,7 @@ impl AppModel {
                             gtk::gio::FileCreateFlags::REPLACE_DESTINATION,
                         )
                         .await;
-                    toaster.add_toast(adw::Toast::new(if result.is_ok() {
+                    toaster.add_toast(transient_toast(if result.is_ok() {
                         "Playlist exported"
                     } else {
                         "Could not write the playlist export"
@@ -3037,7 +3033,7 @@ impl AppModel {
                 self.art_for = None;
                 self.art_path = None;
                 crate::session::clear();
-                crate::style::set_track_visuals(None, None, None);
+                crate::style::set_track_visuals(None, None);
             }
             AppMsg::JumpTo { at, id } => match self.queue_index_at(at, &id) {
                 Some(index) => {
@@ -4100,7 +4096,6 @@ impl AppModel {
                 template,
                 path,
                 backdrop,
-                bar_backdrop,
                 glass_strength,
                 palette,
             } => {
@@ -4113,9 +4108,6 @@ impl AppModel {
                     if let Some(backdrop) = backdrop {
                         let _ = std::fs::remove_file(backdrop);
                     }
-                    if let Some(bar_backdrop) = bar_backdrop {
-                        let _ = std::fs::remove_file(bar_backdrop);
-                    }
                     tracing::debug!("discarding artwork for a track that has moved on");
                     return;
                 }
@@ -4126,11 +4118,7 @@ impl AppModel {
                 self.art_path = path.clone();
                 // Put the cover behind the whole window. Scaled off the GTK thread
                 // alongside the fetch, so this is only the CSS swap.
-                crate::style::set_track_visuals(
-                    backdrop.as_deref(),
-                    bar_backdrop.as_deref(),
-                    palette,
-                );
+                crate::style::set_track_visuals(backdrop.as_deref(), palette);
                 if artwork::backdrop_blur_radius(glass_strength)
                     != artwork::backdrop_blur_radius(self.settings.glass_strength)
                 {
@@ -4161,7 +4149,6 @@ impl AppModel {
                 source,
                 glass_strength,
                 backdrop,
-                bar_backdrop,
             } => {
                 if generation != self.account_generation
                     || self.art_path.as_ref() != Some(&source)
@@ -4171,14 +4158,11 @@ impl AppModel {
                     if let Some(backdrop) = backdrop {
                         let _ = std::fs::remove_file(backdrop);
                     }
-                    if let Some(bar_backdrop) = bar_backdrop {
-                        let _ = std::fs::remove_file(bar_backdrop);
-                    }
                     tracing::debug!(glass_strength, "discarding a stale glass blur variant");
                     return;
                 }
                 if let Some(backdrop) = backdrop.as_deref() {
-                    crate::style::set_backdrop_art(Some(backdrop), bar_backdrop.as_deref());
+                    crate::style::set_backdrop_art(Some(backdrop));
                 }
             }
             CommandMsg::Sidecar(Incoming::Event(event)) => self.on_event(event, &sender),
@@ -4330,7 +4314,7 @@ impl AppModel {
         crate::session::clear();
         crate::library_cache::clear();
         crate::components::artwork::clear_cache();
-        crate::style::set_track_visuals(None, None, None);
+        crate::style::set_track_visuals(None, None);
         crate::notify::clear(relm4::main_application().upcast_ref::<gtk::gio::Application>());
         self.push_snapshot();
     }
@@ -4354,7 +4338,7 @@ impl AppModel {
     }
 
     fn toast(&self, text: &str) {
-        self.toaster.add_toast(adw::Toast::new(text));
+        self.toaster.add_toast(transient_toast(text));
     }
 
     fn copy_apple_link(&self, link: &str) {
@@ -4369,6 +4353,14 @@ impl AppModel {
         display.clipboard().set_text(&link);
         self.toast("Apple Music link copied");
     }
+}
+
+/// Short status and error notices should never make the user hunt for their
+/// close button. Prompts that require a decision use dialogs instead.
+fn transient_toast(text: &str) -> adw::Toast {
+    let toast = adw::Toast::new(text);
+    toast.set_timeout(4);
+    toast
 }
 
 #[cfg(test)]

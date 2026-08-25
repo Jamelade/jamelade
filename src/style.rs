@@ -130,7 +130,7 @@ thread_local! {
     /// Only two custom properties. Replaced on every frame of a track palette
     /// transition without reparsing the complete application stylesheet.
     static GLASS: gtk::CssProvider = gtk::CssProvider::new();
-    /// The cover behind the window, bar and drawer. Separate from `BASE` for the
+    /// The cover behind the main window. Separate from `BASE` for the
     /// reason the module opens with: this one is replaced on every track, and
     /// recolouring the player should not reparse the accent rules.
     static BACKDROP: gtk::CssProvider = gtk::CssProvider::new();
@@ -242,30 +242,31 @@ pub fn set_theme(theme: Theme) {
     refresh_adaptive_text();
 }
 
-/// How the cover is laid out on each surface. Static, so it lives here rather
-/// than in the provider that is replaced per track.
-///
-/// The bar takes `cover`: it is a wide strip, and a square scaled to its width
-/// already overflows its height many times over, so it needs nothing more.
-///
-/// Both are centred explicitly: that used to come from the drift's keyframes,
-/// and the CSS default is `0% 0%` — the top-left corner.
-///
-/// The drawer asks for 150% because it is closer to square and would otherwise
-/// have none — but **on both axes, not one**. A single `150%` sets the width
-/// and lets the height follow the aspect ratio, so a square covered exactly
-/// 1.5w × 1.5w and stopped reaching the moment the drawer was taller than that.
-/// A narrow window makes it exactly that, and the cover sat in a band with bare
-/// surface above and below it.
-///
-/// Naming both stretches the square rather than fitting it, which would matter
-/// on a photograph and cannot be seen on a 256px image blurred and then put
-/// behind a veil.
+/// Centre the one album-art surface explicitly. This used to fall out of an
+/// animation's keyframes; without it CSS defaults to the top-left corner.
 const COVER_LAYOUT: &str = ".jamelade-window { background-size: cover, cover, cover, cover;
-                            background-position: center, center, center, center; }
-         .np-bar { background-size: cover, cover; }
-         .np-sheet { background-size: cover, 150% 150%; }
-         .np-bar, .np-sheet { background-position: center, center; }";
+                            background-position: center, center, center, center; }";
+
+/// The expanded player is an application surface, not another photograph.
+/// Keeping it on the selected theme prevents a maximised album cover from
+/// turning the drawer into a noisy second backdrop.
+const PLAYER_SHEET_SURFACE: &str = ".np-sheet {
+         background-color: @window_bg_color;
+         background-image: none;
+         color: @window_fg_color;
+         text-shadow: none;
+     }
+     .np-sheet .player-state-control {
+         color: @window_fg_color;
+         opacity: 0.45;
+         transition: opacity 120ms ease;
+     }
+     .np-sheet .player-state-control.player-control-active,
+     .np-sheet .player-state-control:active,
+     .np-sheet .player-state-control:checked {
+         color: @window_fg_color;
+         opacity: 1;
+     }";
 
 /// Prefer SF Pro Display only when the user has installed it locally. Jamelade
 /// neither bundles nor redistributes Apple's font. `system-ui` is deliberately
@@ -284,6 +285,8 @@ pub fn set_accent(accent: Accent, companion: Companion) {
                  --jam-secondary-color: {secondary};
                  --glass-primary-color: {bg};
                  --glass-secondary-color: {secondary};
+                 --theme-glass-primary-color: {bg};
+                 --theme-glass-secondary-color: {secondary};
                  --jamelade-headerbar-color: @headerbar_bg_color;
                  --art-fg-color: @window_fg_color;
                  --art-shadow-color: @window_bg_color;
@@ -293,6 +296,8 @@ pub fn set_accent(accent: Accent, companion: Companion) {
                      --jam-secondary-color: #d99a28;
                      --glass-primary-color: var(--accent-bg-color);
                      --glass-secondary-color: #d99a28;
+                     --theme-glass-primary-color: var(--accent-bg-color);
+                     --theme-glass-secondary-color: #d99a28;
                      --jamelade-headerbar-color: @headerbar_bg_color;
                      --art-fg-color: @window_fg_color;
                      --art-shadow-color: @window_bg_color;
@@ -490,27 +495,38 @@ pub fn set_accent(accent: Accent, companion: Companion) {
          }}
          .jamkin-bubble-next {{ font-weight: 550; }}
 
-         /* Padding rather than a margin: the backdrop is a background, and a
-            margin would leave an untinted frame around it.
-
-            On the *row*, not on `.np-bar` itself, so the progress line above
-            it can reach both edges. */
+         /* The compact player is a stable piece of the selected theme. Album
+            artwork remains behind the main window, never duplicated or
+            blurred inside this pill. The progress line stays outside the
+            padded row so it can still reach both edges. */
+         .np-bar,
+         .np-bar:backdrop {{
+             background-image: none;
+             color: @window_fg_color;
+             text-shadow: none;
+         }}
+         .np-bar .dim-label,
+         .np-bar:backdrop .dim-label {{
+             color: alpha(@window_fg_color, 0.68);
+         }}
          .np-row {{
              margin: 7px;
              padding: 10px;
              border-radius: 22px;
-             background-color: alpha(@window_bg_color, 0.44);
+             background-color: @window_bg_color;
              background-image: linear-gradient(
                  145deg,
                  alpha(#ffffff, 0.13),
                  transparent 42%,
-                 alpha(var(--glass-primary-color), 0.07)
+                 alpha(var(--theme-glass-primary-color), 0.09)
              );
              box-shadow:
                  inset 0 1px alpha(#ffffff, 0.20),
                  inset 0 0 0 1px alpha(currentColor, 0.09),
                  0 9px 24px alpha(#000000, 0.10);
          }}
+
+         {PLAYER_SHEET_SURFACE}
 
          .player-cover-link {{
              padding: 0;
@@ -700,6 +716,20 @@ pub fn set_accent(accent: Accent, companion: Companion) {
              color: var(--accent-color);
              font-weight: 800;
          }}
+         .lyrics-tools {{ margin-top: 4px; }}
+         .lyrics-tool-pill,
+         .lyrics-tool-picker > button {{
+             min-height: 36px;
+             border-radius: 12px;
+             background-color: alpha(@window_fg_color, 0.075);
+             background-image: linear-gradient(
+                 145deg,
+                 alpha(#ffffff, 0.13),
+                 alpha(var(--glass-primary-color), 0.055)
+             );
+             box-shadow: inset 0 0 0 1px alpha(currentColor, 0.07);
+         }}
+         .lyrics-tool-pill {{ padding: 0 3px; }}
 
          /* Dragging a row in a reorderable list — the queue, and the sidebar's
             pinned playlists. The argument ARCHITECTURE.md asks for: libadwaita has no
@@ -770,7 +800,6 @@ pub fn set_accent(accent: Accent, companion: Companion) {
 struct MaterialOpacity {
     header: f32,
     sidebar: f32,
-    row: f32,
     feature: f32,
 }
 
@@ -795,7 +824,6 @@ fn material_opacity(strength: u8) -> MaterialOpacity {
     MaterialOpacity {
         header: glass_opacity(0.82, 0.61, strength),
         sidebar: glass_opacity(0.84, 0.602, strength),
-        row: glass_opacity(0.56, 0.378, strength),
         feature: glass_opacity(0.68, 0.498, strength),
     }
 }
@@ -819,15 +847,11 @@ fn material_css(strength: u8) -> String {
              background-color: alpha(@window_bg_color, {:.3});
              {clear_fill}
          }}
-         .np-row {{
-             background-color: alpha(@window_bg_color, {:.3});
-             {clear_fill}
-         }}
          .explore-hero, .lyrics-current {{
              background-color: alpha(@window_bg_color, {:.3});
              {clear_fill}
          }}",
-        opacity.header, opacity.sidebar, opacity.row, opacity.feature
+        opacity.header, opacity.sidebar, opacity.feature
     )
 }
 
@@ -848,10 +872,6 @@ thread_local! {
     /// The cover currently behind the window, so the next one has something to
     /// fade *from*.
     static SHOWN_ART: std::cell::RefCell<Option<std::path::PathBuf>> =
-        const { std::cell::RefCell::new(None) };
-    /// The permanently softened variant used by the bottom player. Usually the
-    /// same path as `SHOWN_ART`; distinct near the clear-art endpoint.
-    static SHOWN_BAR_ART: std::cell::RefCell<Option<std::path::PathBuf>> =
         const { std::cell::RefCell::new(None) };
     /// Album colours actually painted in the current frame. Unlike the cover
     /// path this advances through every interpolated value, so rapidly skipping
@@ -907,37 +927,28 @@ fn transition_image(
 /// The two extracted colours do not replace the Jamkin accent: they tint only
 /// the translucent material. Names and controls therefore keep their chosen
 /// identity and contrast while the surrounding atmosphere follows the album.
-pub fn set_track_visuals(
-    path: Option<&std::path::Path>,
-    bar_path: Option<&std::path::Path>,
-    palette: Option<AlbumPalette>,
-) {
+pub fn set_track_visuals(path: Option<&std::path::Path>, palette: Option<AlbumPalette>) {
     // Whatever was in flight is now heading for the wrong cover and colours.
     cancel_visual_fade();
 
     let from = SHOWN_ART.with(|c| c.borrow().clone());
     let to = path.map(std::path::Path::to_path_buf);
     SHOWN_ART.with(|c| *c.borrow_mut() = to.clone());
-    let from_bar = SHOWN_BAR_ART.with(|c| c.borrow().clone());
-    let to_bar = bar_path.map(std::path::Path::to_path_buf);
-    SHOWN_BAR_ART.with(|c| *c.borrow_mut() = to_bar.clone());
     let from_palette = SHOWN_PALETTE.with(std::cell::Cell::get);
 
     let album_glass = ALBUM_GLASS_ON.with(std::cell::Cell::get);
     let fade_art = album_glass && matches!((&from, &to), (Some(from), Some(to)) if from != to);
-    let fade_bar =
-        album_glass && matches!((&from_bar, &to_bar), (Some(from), Some(to)) if from != to);
     let fade_palette =
         album_glass && matches!((from_palette, palette), (Some(from), Some(to)) if from != to);
-    if !fade_art && !fade_bar && !fade_palette {
+    if !fade_art && !fade_palette {
         // First cover, same cover, playback stopping, or no usable palette.
         // There is no pair to interpolate, so land on the honest state now.
-        paint_backdrop(to.as_deref().map(image_of), to_bar.as_deref().map(image_of));
+        paint_backdrop(to.as_deref().map(image_of));
         paint_album_palette(palette);
         return;
     }
-    if !fade_art && !fade_bar {
-        paint_backdrop(to.as_deref().map(image_of), to_bar.as_deref().map(image_of));
+    if !fade_art {
+        paint_backdrop(to.as_deref().map(image_of));
     }
     if !fade_palette {
         paint_album_palette(palette);
@@ -954,7 +965,7 @@ pub fn set_track_visuals(
             // the settled state is one image and one url — and so a wrong guess
             // about which way `cross-fade` reads its percentage could only ever
             // be a fade in the wrong direction, never a wrong final frame.
-            paint_backdrop(to.as_deref().map(image_of), to_bar.as_deref().map(image_of));
+            paint_backdrop(to.as_deref().map(image_of));
             paint_album_palette(palette);
             // Cleared here, not by the canceller: removing an already-finished
             // source logs a GLib critical.
@@ -962,12 +973,9 @@ pub fn set_track_visuals(
             return gtk::glib::ControlFlow::Break;
         }
         let eased = ease(t);
-        if fade_art || fade_bar {
+        if fade_art {
             let pct = (eased * 100.0).round();
-            paint_backdrop(
-                transition_image(&from, &to, fade_art, pct),
-                transition_image(&from_bar, &to_bar, fade_bar, pct),
-            );
+            paint_backdrop(transition_image(&from, &to, true, pct));
         }
         if fade_palette && let (Some(from), Some(to)) = (from_palette, palette) {
             paint_album_palette(Some(from.interpolate(to, eased)));
@@ -980,16 +988,11 @@ pub fn set_track_visuals(
 /// Replace only the blurred copy of the current cover. Used when the glass
 /// slider crosses into a new blur radius; album-derived colours stay exactly
 /// where their own transition left them.
-pub fn set_backdrop_art(path: Option<&std::path::Path>, bar_path: Option<&std::path::Path>) {
+pub fn set_backdrop_art(path: Option<&std::path::Path>) {
     cancel_visual_fade();
     let path = path.map(std::path::Path::to_path_buf);
-    let bar_path = bar_path.map(std::path::Path::to_path_buf);
     SHOWN_ART.with(|shown| *shown.borrow_mut() = path.clone());
-    SHOWN_BAR_ART.with(|shown| *shown.borrow_mut() = bar_path.clone());
-    paint_backdrop(
-        path.as_deref().map(image_of),
-        bar_path.as_deref().map(image_of),
-    );
+    paint_backdrop(path.as_deref().map(image_of));
     refresh_adaptive_text();
 }
 
@@ -1042,9 +1045,7 @@ fn adaptive_text_css(palette: AlbumPalette, blend: f32) -> String {
              --art-shadow-color: {shadow};
          }}
          .art-foreground,
-         .art-foreground headerbar,
-         .np-bar,
-         .np-sheet {{
+         .art-foreground headerbar {{
              color: var(--art-fg-color);
              text-shadow:
                  -1px -1px 1px alpha(var(--art-shadow-color), {:.3}),
@@ -1060,9 +1061,7 @@ fn adaptive_text_css(palette: AlbumPalette, blend: f32) -> String {
                  0 1px 2px alpha(var(--art-shadow-color), {:.3}),
                  0 0 6px alpha(var(--art-shadow-color), {:.3});
          }}
-         .art-foreground .dim-label,
-         .np-bar .dim-label,
-         .np-sheet .dim-label {{
+         .art-foreground .dim-label {{
              color: alpha(var(--art-fg-color), 0.74);
          }}",
         0.96 * blend,
@@ -1109,17 +1108,9 @@ fn image_of(path: &std::path::Path) -> String {
 /// The backdrop rule. A CSS *image* in, CSS out — so the caller can hand over
 /// one cover or a cross-fade of two and this does not care which.
 ///
-/// All three surfaces get their own rule because their scrims are **not** the
-/// same number. The whole-window layer sits directly behind long song lists;
-/// the drawer can take a heavier veil; and the compact bar needs enough of the
-/// record left showing that it does not become a flat grey strip.
-///
-/// Pure, and separate from the provider it is loaded into, so a test can read
-/// what this actually emits. The first attempt at this feature changed the
-/// doc comment and the base rules and left the selector here saying `.np-sheet`
-/// alone — a mistake nothing could catch, because the CSS was valid and the
-/// drawer went on working.
-/// How opaque the veil is, top and bottom, for each surface — **per theme**.
+/// The compact and expanded players are intentionally absent: both remain
+/// stable selected-theme surfaces. How opaque the main-window veil is, top and
+/// bottom, is still chosen per light or dark presentation.
 ///
 /// One set of numbers cannot serve both, and that is not a matter of taste.
 /// The veil is `@window_bg_color`, so at 0.86 the cover contributes the
@@ -1135,8 +1126,6 @@ fn image_of(path: &std::path::Path) -> String {
 /// the covers this was checked against, not the prettiest ones available.
 struct Veil {
     window: (f32, f32),
-    bar: (f32, f32),
-    sheet: (f32, f32),
 }
 
 fn veil(dark: bool, strength: u8) -> Veil {
@@ -1146,14 +1135,6 @@ fn veil(dark: bool, strength: u8) -> Veil {
                 glass_opacity(0.82, 0.638, strength),
                 glass_opacity(0.76, 0.592, strength),
             ),
-            bar: (
-                glass_opacity(0.80, 0.646, strength),
-                glass_opacity(0.74, 0.586, strength),
-            ),
-            sheet: (
-                glass_opacity(0.88, 0.712, strength),
-                glass_opacity(0.80, 0.632, strength),
-            ),
         }
     } else {
         Veil {
@@ -1161,35 +1142,15 @@ fn veil(dark: bool, strength: u8) -> Veil {
                 glass_opacity(0.74, 0.60, strength),
                 glass_opacity(0.68, 0.554, strength),
             ),
-            bar: (
-                glass_opacity(0.74, 0.60, strength),
-                glass_opacity(0.68, 0.554, strength),
-            ),
-            sheet: (
-                glass_opacity(0.76, 0.634, strength),
-                glass_opacity(0.68, 0.568, strength),
-            ),
         }
     }
 }
 
-fn backdrop_css(image: Option<&str>, bar_image: Option<&str>, dark: bool, strength: u8) -> String {
+fn backdrop_css(image: Option<&str>, dark: bool, strength: u8) -> String {
     let Some(image) = image else {
-        return ".np-bar, .np-sheet { background-image: none; }".into();
+        return String::new();
     };
-    let bar_image = bar_image.unwrap_or(image);
     let veil = veil(dark, strength);
-    let layers = |(top, bottom): (f32, f32), layer_image: &str| {
-        format!(
-            "background-image:
-                 linear-gradient(
-                     alpha(@window_bg_color, {top}),
-                     alpha(@window_bg_color, {bottom})
-                 ),
-                 {layer_image};
-             background-repeat: no-repeat;"
-        )
-    };
     let window = if strength >= 100 {
         format!(
             "background-image: {image};
@@ -1217,13 +1178,7 @@ fn backdrop_css(image: Option<&str>, bar_image: Option<&str>, dark: bool, streng
             veil.window.0, veil.window.1,
         )
     };
-    format!(
-        ".jamelade-window {{ {window} }}
-         .np-bar {{ {} }}
-         .np-sheet {{ {} }}",
-        layers(veil.bar, bar_image),
-        layers(veil.sheet, image)
-    )
+    format!(".jamelade-window {{ {window} }}")
 }
 
 /// Whether libadwaita is currently painting dark.
@@ -1249,26 +1204,16 @@ pub fn set_backdrop_enabled(on: bool) {
 
 fn repaint_shown_backdrop() {
     let image = SHOWN_ART.with(|shown| shown.borrow().clone());
-    let bar_image = SHOWN_BAR_ART.with(|shown| shown.borrow().clone());
-    paint_backdrop(
-        image.as_deref().map(image_of),
-        bar_image.as_deref().map(image_of),
-    );
+    paint_backdrop(image.as_deref().map(image_of));
 }
 
-fn paint_backdrop(image: Option<String>, bar_image: Option<String>) {
+fn paint_backdrop(image: Option<String>) {
     // The one place every path funnels through — a track change, the fade's
     // per-frame repaint, the theme-flip handler — so the preference holds by
     // construction rather than at three call sites that could each forget it.
     let image = image.filter(|_| ALBUM_GLASS_ON.with(std::cell::Cell::get));
-    let bar_image = bar_image.filter(|_| ALBUM_GLASS_ON.with(std::cell::Cell::get));
     let strength = GLASS_STRENGTH.with(std::cell::Cell::get);
-    let css = backdrop_css(
-        image.as_deref(),
-        bar_image.as_deref(),
-        painting_dark(),
-        strength,
-    );
+    let css = backdrop_css(image.as_deref(), painting_dark(), strength);
     BACKDROP.with(|p| p.load_from_string(&css));
 }
 
@@ -1293,30 +1238,19 @@ mod tests {
     }
 
     #[test]
-    fn the_drawer_backdrop_covers_both_axes() {
-        // A single percentage is a *width*; the height follows the aspect
-        // ratio. The cover is square, so one number meant it reached 1.5w down
-        // the drawer and no further — bare surface above and below it as soon
-        // as the window was narrow enough to make the drawer taller than that.
-        let sheet = COVER_LAYOUT
-            .lines()
-            .find(|l| l.contains(".np-sheet"))
-            .expect("the drawer must have a layout rule");
-        let image = sheet
-            .split("background-size:")
-            .nth(1)
-            .and_then(|s| {
-                s.trim_end()
-                    .trim_end_matches(&['}', ';', ' '][..])
-                    .rsplit(',')
-                    .next()
-            })
-            .expect("a background-size with a layer for the image")
-            .trim()
-            .to_owned();
+    fn the_drawer_is_always_a_normal_theme_surface() {
+        assert!(PLAYER_SHEET_SURFACE.contains("background-color: @window_bg_color"));
+        assert!(PLAYER_SHEET_SURFACE.contains("background-image: none"));
+        assert!(!COVER_LAYOUT.contains(".np-sheet"));
         assert!(
-            image == "cover" || image.split_whitespace().count() == 2,
-            "the drawer's cover needs both axes or `cover`, got {image:?}"
+            !adaptive_text_css(
+                AlbumPalette {
+                    primary: crate::palette::Rgb { r: 5, g: 6, b: 7 },
+                    secondary: crate::palette::Rgb { r: 8, g: 9, b: 10 },
+                },
+                1.0,
+            )
+            .contains(".np-sheet")
         );
     }
 
@@ -1331,7 +1265,7 @@ mod tests {
         // that animation's keyframes: the CSS default is the top-left corner.
         let css = format!(
             "{COVER_LAYOUT}{}",
-            backdrop_css(Some("url(\"file:///tmp/x.png\")"), None, true, 70)
+            backdrop_css(Some("url(\"file:///tmp/x.png\")"), true, 70)
         );
         assert!(
             !css.contains("animation") && !css.contains("keyframes"),
@@ -1341,34 +1275,29 @@ mod tests {
     }
 
     #[test]
-    fn the_window_and_both_player_surfaces_get_the_cover() {
-        let css = backdrop_css(Some("url(\"file:///tmp/x.png\")"), None, true, 70);
+    fn only_the_main_window_gets_the_cover() {
+        let css = backdrop_css(Some("url(\"file:///tmp/x.png\")"), true, 70);
         assert!(
             css.contains(".jamelade-window"),
             "the main content was left out: {css}"
         );
-        assert!(css.contains(".np-bar"), "the bar was left out: {css}");
-        assert!(css.contains(".np-sheet"), "the drawer was left out: {css}");
+        assert!(
+            !css.contains(".np-bar"),
+            "the compact player inherited album art: {css}"
+        );
+        assert!(
+            !css.contains(".np-sheet"),
+            "the drawer inherited album art: {css}"
+        );
         assert_eq!(
             css.matches("url(\"file:///tmp/x.png\")").count(),
-            3,
-            "each surface needs its own copy of the image"
+            1,
+            "only the main window needs the image"
         );
-        // Clearing has to reach both player surfaces. The window rule disappears
-        // entirely so BASE's quiet Jamkin gradients become visible again.
-        let cleared = backdrop_css(None, None, true, 70);
-        assert!(cleared.contains(".np-bar") && cleared.contains(".np-sheet"));
-        assert!(!cleared.contains(".jamelade-window"));
-    }
-
-    #[test]
-    fn the_bar_shows_more_of_the_record_than_the_drawer() {
-        // Small type on a thin strip is the harder read, but a veil heavy
-        // enough for the drawer left the bar a flat grey — which is the bug
-        // this pair of numbers exists to prevent regressing.
-        let veil = veil(true, 70);
-        assert!(veil.bar.0 < veil.sheet.0);
-        assert!(veil.bar.1 < veil.sheet.1);
+        // The provider becomes empty so BASE's quiet Jamkin gradients become
+        // visible again.
+        let cleared = backdrop_css(None, true, 70);
+        assert!(cleared.is_empty());
     }
 
     #[test]
@@ -1377,22 +1306,18 @@ mod tests {
         // `@window_bg_color`, so 0.86 leaves the cover 14% either way — and 14%
         // of a photograph reads as a coloured glow over a dark window and as
         // pastel mush over a near-white one.
-        let dark = backdrop_css(Some("url(\"a\")"), None, true, 70);
-        let light = backdrop_css(Some("url(\"a\")"), None, false, 70);
+        let dark = backdrop_css(Some("url(\"a\")"), true, 70);
+        let light = backdrop_css(Some("url(\"a\")"), false, 70);
         assert_ne!(dark, light, "both themes got the same veil");
 
         let dark = veil(true, 70);
         let light = veil(false, 70);
-        for (top, bottom) in [dark.window, dark.bar, dark.sheet] {
-            assert!(top > bottom, "the veil must thin downwards");
-        }
-        for (top, bottom) in [light.window, light.bar, light.sheet] {
-            assert!(top > bottom, "the veil must thin downwards");
-        }
+        let (dark_top, dark_bottom) = dark.window;
+        let (light_top, light_bottom) = light.window;
+        assert!(dark_top > dark_bottom, "the veil must thin downwards");
+        assert!(light_top > light_bottom, "the veil must thin downwards");
         assert!(
-            light.window.0 < dark.window.0
-                && light.sheet.0 < dark.sheet.0
-                && light.bar.0 < dark.bar.0,
+            light.window.0 < dark.window.0,
             "light must let more of the cover through, not less"
         );
     }
@@ -1405,10 +1330,9 @@ mod tests {
         for dark in [false, true] {
             for strength in [0, 70] {
                 let veil = veil(dark, strength);
-                for (top, bottom) in [veil.window, veil.bar, veil.sheet] {
-                    assert!(bottom >= 0.5, "veil too thin for text: {bottom}");
-                    assert!(top <= 0.9, "veil so heavy the cover is invisible: {top}");
-                }
+                let (top, bottom) = veil.window;
+                assert!(bottom >= 0.5, "veil too thin for text: {bottom}");
+                assert!(top <= 0.9, "veil so heavy the cover is invisible: {top}");
             }
         }
     }
@@ -1441,15 +1365,10 @@ mod tests {
         for dark in [false, true] {
             let almost = veil(dark, 99);
             let clear = veil(dark, 100);
-            for ((near_top, near_bottom), (clear_top, clear_bottom)) in [
-                (almost.window, clear.window),
-                (almost.bar, clear.bar),
-                (almost.sheet, clear.sheet),
-            ] {
-                assert!(near_top > 0.0 && near_top < 0.01);
-                assert!(near_bottom > 0.0 && near_bottom < 0.01);
-                assert_eq!((clear_top, clear_bottom), (0.0, 0.0));
-            }
+            let (near_top, near_bottom) = almost.window;
+            assert!(near_top > 0.0 && near_top < 0.01);
+            assert!(near_bottom > 0.0 && near_bottom < 0.01);
+            assert_eq!(clear.window, (0.0, 0.0));
         }
         let almost = material_opacity(99);
         assert!(almost.header > 0.0 && almost.header < 0.01);
@@ -1463,38 +1382,33 @@ mod tests {
         let opacity = material_opacity(100);
         assert_eq!(opacity.header, 0.0);
         assert_eq!(opacity.sidebar, 0.0);
-        assert_eq!(opacity.row, 0.0);
         assert_eq!(opacity.feature, 0.0);
         for dark in [false, true] {
             let veil = veil(dark, 100);
             assert_eq!(veil.window, (0.0, 0.0));
-            assert_eq!(veil.bar, (0.0, 0.0));
-            assert_eq!(veil.sheet, (0.0, 0.0));
         }
         assert!(material_css(100).contains("background-image: none"));
-        let backdrop = backdrop_css(Some("url(\"cover\")"), None, true, 100);
-        assert_eq!(backdrop.matches("url(\"cover\")").count(), 3);
+        let backdrop = backdrop_css(Some("url(\"cover\")"), true, 100);
+        assert_eq!(backdrop.matches("url(\"cover\")").count(), 1);
         assert!(!backdrop.contains("--glass-primary-color"));
         assert!(!backdrop.contains("--glass-secondary-color"));
     }
 
     #[test]
-    fn the_clear_window_keeps_a_separate_blurred_bar_image() {
-        let backdrop = backdrop_css(
-            Some("url(\"clear-cover\")"),
-            Some("url(\"blurred-cover\")"),
-            true,
-            100,
+    fn the_compact_player_never_receives_a_cover_image() {
+        let backdrop = backdrop_css(Some("url(\"clear-cover\")"), true, 100);
+        assert_eq!(backdrop.matches("url(\"clear-cover\")").count(), 1);
+        assert!(!backdrop.contains(".np-bar"));
+        assert!(
+            !adaptive_text_css(
+                AlbumPalette {
+                    primary: crate::palette::Rgb { r: 5, g: 6, b: 7 },
+                    secondary: crate::palette::Rgb { r: 8, g: 9, b: 10 },
+                },
+                1.0,
+            )
+            .contains(".np-bar")
         );
-        assert_eq!(backdrop.matches("url(\"clear-cover\")").count(), 2);
-        assert_eq!(backdrop.matches("url(\"blurred-cover\")").count(), 1);
-        let bar = backdrop
-            .split(".np-bar")
-            .nth(1)
-            .and_then(|css| css.split(".np-sheet").next())
-            .expect("bar rule");
-        assert!(bar.contains("url(\"blurred-cover\")"));
-        assert!(!bar.contains("url(\"clear-cover\")"));
     }
 
     #[test]
@@ -1549,7 +1463,6 @@ mod tests {
         let liquid = material_opacity(100);
         assert!(liquid.header < subtle.header);
         assert!(liquid.sidebar < subtle.sidebar);
-        assert!(liquid.row < subtle.row);
         assert!(liquid.feature < subtle.feature);
 
         let subtle = veil(true, 0);

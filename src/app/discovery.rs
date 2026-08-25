@@ -11,9 +11,21 @@
 use relm4::ComponentSender;
 
 use super::{AppModel, CommandMsg, View};
-use crate::lyrics::{Lyrics, Providers, Query};
+use crate::lyrics::{Lyrics, Provider, Providers, Query};
 
 const LYRICS_CACHE_MAX: usize = 64;
+
+/// A transient Apple failure may fall through to a useful plain third-party
+/// lyric. Show it, but do not let it hide a recovered synchronized Apple answer
+/// the next time this recording plays. Synchronized fallbacks and first-party
+/// plain lyrics remain cacheable.
+fn should_cache_lyrics(lyrics: &Lyrics, apple_available: bool) -> bool {
+    !apple_available
+        || lyrics.source == Some(Provider::AppleMusic)
+        || lyrics.synced
+        || lyrics.instrumental
+        || lyrics.lines.is_empty()
+}
 
 impl AppModel {
     fn lyrics_wanted(&self) -> bool {
@@ -117,12 +129,22 @@ impl AppModel {
                 .as_deref()
                 .filter(|id| id.bytes().all(|byte| byte.is_ascii_digit()))
         });
+        // MusicKit can announce the item before its playback clock knows the
+        // duration. The first lyric request may therefore be intentionally
+        // incomplete; once a position event supplies the duration, building
+        // the query from the live clock changes the cache key and retries the
+        // exact recording match instead of keeping an ambiguous plain result.
+        let duration_ms = if self.player.duration_ms > 0 {
+            self.player.duration_ms
+        } else {
+            item.duration_ms
+        };
         let Some(query) = Query::new(
             catalog_id,
             &item.title,
             &item.artist,
             &item.album,
-            item.duration_ms,
+            duration_ms,
         ) else {
             self.lyrics_loading = false;
             self.lyrics_for = None;
@@ -211,13 +233,15 @@ impl AppModel {
         self.lyrics_loading = false;
         match result {
             Ok(lyrics) => {
-                if self.lyrics_cache.len() >= LYRICS_CACHE_MAX
-                    && !self.lyrics_cache.contains_key(&query)
-                    && let Some(evicted) = self.lyrics_cache.keys().next().cloned()
-                {
-                    self.lyrics_cache.remove(&evicted);
+                if should_cache_lyrics(&lyrics, self.client().is_some()) {
+                    if self.lyrics_cache.len() >= LYRICS_CACHE_MAX
+                        && !self.lyrics_cache.contains_key(&query)
+                        && let Some(evicted) = self.lyrics_cache.keys().next().cloned()
+                    {
+                        self.lyrics_cache.remove(&evicted);
+                    }
+                    self.lyrics_cache.insert(query, lyrics.clone());
                 }
-                self.lyrics_cache.insert(query, lyrics.clone());
                 self.lyrics_view.show(&lyrics);
                 self.jamkin_mode.show(&lyrics);
                 self.sync_lyrics_position();
@@ -249,5 +273,40 @@ impl AppModel {
             self.lyrics_view.disabled();
             self.jamkin_mode.disabled();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lyrics::Line;
+
+    fn lyric(source: Provider, synced: bool) -> Lyrics {
+        Lyrics {
+            lines: vec![Line {
+                at_ms: synced.then_some(1_000),
+                text: "Synthetic line".into(),
+            }],
+            synced,
+            source: Some(source),
+            ..Lyrics::default()
+        }
+    }
+
+    #[test]
+    fn a_plain_fallback_cannot_mask_recovered_apple_sync() {
+        assert!(!should_cache_lyrics(
+            &lyric(Provider::LyricsOvh, false),
+            true
+        ));
+        assert!(should_cache_lyrics(
+            &lyric(Provider::AppleMusic, false),
+            true
+        ));
+        assert!(should_cache_lyrics(&lyric(Provider::Lrclib, true), true));
+        assert!(should_cache_lyrics(
+            &lyric(Provider::LyricsOvh, false),
+            false
+        ));
     }
 }

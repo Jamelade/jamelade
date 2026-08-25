@@ -506,20 +506,50 @@ impl SimpleComponent for PlayerView {
                                         // queue row — the block that ate the
                                         // 72px hiding the thumbnail was meant
                                         // to free.
-                                        gtk::Label {
-                                            set_ellipsize: gtk::pango::EllipsizeMode::End,
-                                            set_max_width_chars: 28,
-                                            set_use_markup: false,
+                                        gtk::Box {
+                                            set_orientation: gtk::Orientation::Horizontal,
+                                            set_spacing: 4,
                                             #[watch]
-                                            set_css_classes: if model.stacked() {
-                                                &["title-1"]
+                                            set_halign: if model.centred_text() {
+                                                gtk::Align::Center
                                             } else {
-                                                &["title-4"]
+                                                gtk::Align::Start
                                             },
-                                            #[watch]
-                                            set_xalign: if model.centred_text() { 0.5 } else { 0.0 },
-                                            #[watch]
-                                            set_label: &model.snap.title,
+
+                                            // Balance the credits button so the
+                                            // title itself, rather than the
+                                            // title-and-button pair, is centred.
+                                            gtk::Box {
+                                                set_size_request: (34, 1),
+                                                #[watch]
+                                                set_visible: model.snap.catalog_id.is_some(),
+                                            },
+
+                                            gtk::Label {
+                                                set_ellipsize: gtk::pango::EllipsizeMode::End,
+                                                set_max_width_chars: 28,
+                                                set_use_markup: false,
+                                                #[watch]
+                                                set_css_classes: if model.stacked() {
+                                                    &["title-1"]
+                                                } else {
+                                                    &["title-4"]
+                                                },
+                                                #[watch]
+                                                set_label: &model.snap.title,
+                                            },
+                                            gtk::Button {
+                                                set_icon_name: "avatar-default-symbolic",
+                                                set_tooltip_text: Some("Song credits"),
+                                                add_css_class: "flat",
+                                                add_css_class: "circular",
+                                                add_css_class: "player-state-control",
+                                                #[watch]
+                                                set_visible: model.snap.catalog_id.is_some(),
+                                                #[watch]
+                                                set_sensitive: model.snap.catalog_id.is_some(),
+                                                connect_clicked => PlayerViewInput::ShowCredits,
+                                            },
                                         },
                                         gtk::Box {
                                             set_orientation: gtk::Orientation::Vertical,

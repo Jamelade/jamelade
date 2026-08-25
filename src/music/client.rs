@@ -52,9 +52,11 @@ const PLAYLIST_PREVIEW: usize = 40;
 
 /// Apple's hard cap for a library page. Asking for more is silently clamped.
 const LIBRARY_PAGE: usize = 100;
-/// How many library pages to fetch at once. The pages are independent, so
-/// fetching them serially spent most of the load waiting on round trips.
-const LIBRARY_CONCURRENCY: usize = 6;
+/// How many library pages to fetch at once. MusicKit's browser client can
+/// produce transient gateway timeouts when six authenticated reads arrive at
+/// once, especially just after login or resume. Two keeps useful overlap
+/// without flooding the single browser-owned API transport.
+const LIBRARY_CONCURRENCY: usize = 2;
 
 /// Explore is intentionally small. These are shelves, not another infinite
 /// results list, and bounding them also bounds the number of covers a visit can
@@ -74,13 +76,15 @@ const API_BODY_MAX: usize = 3 * 1024 * 1024;
 /// keeps a compromised or changed endpoint from consuming the general 3 MiB
 /// allowance merely because both responses happen to be JSON.
 const LYRICS_BODY_MAX: usize = 2 * 1024 * 1024;
-/// GETs are safe to repeat, and MusicKit briefly reports a gateway failure
-/// while its authenticated API client finishes starting. Two short retries
-/// cover that hand-off and ordinary CDN blips without turning a real Apple
-/// outage into a request storm.
-const GET_RETRY_DELAYS: [std::time::Duration; 2] = [
-    std::time::Duration::from_millis(300),
+/// GETs are safe to repeat, and MusicKit can briefly report a gateway failure
+/// while its authenticated API client starts or resumes. This bounded window
+/// covers that hand-off and ordinary CDN blips without retrying writes or
+/// turning a real Apple outage into an unbounded request loop.
+const GET_RETRY_DELAYS: [std::time::Duration; 4] = [
+    std::time::Duration::from_millis(350),
     std::time::Duration::from_millis(900),
+    std::time::Duration::from_millis(1_800),
+    std::time::Duration::from_millis(3_600),
 ];
 
 fn transient_gateway(status: StatusCode) -> bool {
@@ -238,9 +242,10 @@ impl Client {
             anyhow::bail!("invalid Apple Music catalog id");
         }
 
+        let (lyrics_locale, script_locale) = crate::i18n::apple_lyrics_localization();
         let res = self
             .get(&format!(
-                "/catalog/{}/songs/{catalog_id}/lyrics",
+                "/catalog/{}/songs/{catalog_id}/syllable-lyrics?l%5Blyrics%5D={lyrics_locale}&l%5Bscript%5D={script_locale}&extend=ttmlLocalizations",
                 self.storefront
             ))
             .await
@@ -257,7 +262,7 @@ impl Client {
         apple_lyrics_from_value(&parsed)
     }
 
-    /// Apple's catalog credits view for the current recording. Remote strings
+    /// Apple's credits relationship for the current recording. Remote strings
     /// are flattened into bounded plain text; the UI never renders Apple HTML
     /// or exposes the raw response.
     pub async fn song_credits(&self, catalog_id: &str) -> Result<Vec<SongCredit>> {
@@ -269,7 +274,7 @@ impl Client {
         }
         let res = self
             .get(&format!(
-                "/catalog/{}/songs/{catalog_id}/view/credits",
+                "/catalog/{}/songs/{catalog_id}?include=credits",
                 self.storefront
             ))
             .await
@@ -668,8 +673,8 @@ impl Client {
         // rather than returning an empty page, unlike a collection, which
         // returns `{"data": []}`. Since a round fires LIBRARY_CONCURRENCY
         // offsets at once, every playlist shorter than
-        // LIBRARY_PAGE * LIBRARY_CONCURRENCY had five of its six requests come
-        // back 404 and take the whole page down with them.
+        // LIBRARY_PAGE * LIBRARY_CONCURRENCY can have later requests come back
+        // 404 and take the whole page down with them.
         //
         // Treat it as the empty page it means. The caller stops on a short
         // round anyway, so this cannot mask a real gap: offset 0 returning
@@ -1421,9 +1426,19 @@ fn credit_names(resource: &serde_json::Value) -> Vec<String> {
 }
 
 fn parse_song_credits(value: &serde_json::Value) -> Vec<SongCredit> {
-    let Some(resources) = value.get("data").and_then(serde_json::Value::as_array) else {
+    let Some(data) = value.get("data").and_then(serde_json::Value::as_array) else {
         return Vec::new();
     };
+    // Apple returns the role categories under the song's included `credits`
+    // relationship. Accepting a direct array as well keeps the parser useful
+    // for a bounded fixture or a future relationship-only response.
+    let resources = data
+        .first()
+        .and_then(|song| song.get("relationships"))
+        .and_then(|relationships| relationships.get("credits"))
+        .and_then(|credits| credits.get("data"))
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or(data);
     let mut groups = Vec::new();
     for resource in resources.iter().take(64) {
         let attributes = resource.get("attributes");
@@ -1695,14 +1710,20 @@ fn artist_albums_of(resource: &ArtistResource) -> Vec<Album> {
 /// semantically named keys rather than by accepting every remote XML string.
 fn apple_lyrics_from_value(value: &serde_json::Value) -> Result<Option<crate::lyrics::Lyrics>> {
     let Some(ttml) = value
-        .pointer("/data/0/attributes/ttml")
+        .pointer("/data/0/attributes/ttmlLocalizations")
         .and_then(serde_json::Value::as_str)
         .filter(|ttml| !ttml.trim().is_empty())
+        .or_else(|| {
+            value
+                .pointer("/data/0/attributes/ttml")
+                .and_then(serde_json::Value::as_str)
+                .filter(|ttml| !ttml.trim().is_empty())
+        })
     else {
         return Ok(None);
     };
     let mut original = crate::lyrics::lyrics_from_apple_ttml(ttml)?;
-    let mut variants = Vec::new();
+    let mut variants = std::mem::take(&mut original.variants);
     collect_apple_lyric_variants(value, None, None, &original.lines, &mut variants, 0);
     original.variants = variants;
     Ok(Some(original))
@@ -1855,6 +1876,7 @@ mod tests {
     fn apple_supplied_translation_and_pronunciation_are_preserved() {
         let raw = serde_json::json!({
             "data": [{"attributes": {
+                "ttmlLocalizations": null,
                 "ttml": "<tt><body><p begin='1s'>Original</p></body></tt>",
                 "translations": [{
                     "languageName": "English",
@@ -2036,10 +2058,16 @@ mod tests {
     fn credits_are_flattened_to_bounded_plain_roles_and_names() {
         let response = serde_json::json!({
             "data": [{
-                "attributes": { "title": "Songwriting" },
-                "relationships": { "artists": { "data": [
-                    { "attributes": { "name": "Example Person" } }
-                ]}}
+                "type": "songs",
+                "id": "1000000001",
+                "attributes": { "name": "Synthetic song" },
+                "relationships": { "credits": { "data": [{
+                    "type": "role-categories",
+                    "attributes": { "title": "Songwriting" },
+                    "relationships": { "credit-artists": { "data": [
+                        { "attributes": { "name": "Example Person" } }
+                    ]}}
+                }]}}
             }]
         });
         assert_eq!(
