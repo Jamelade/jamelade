@@ -116,6 +116,7 @@ pub(crate) fn parse(raw: &str) -> Result<Lyrics> {
         synced,
         instrumental: false,
         source: Some(Provider::AppleMusic),
+        ..Lyrics::default()
     })
 }
 

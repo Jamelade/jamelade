@@ -70,6 +70,7 @@ pub(super) fn sort_keys_menu(view: super::View) -> gtk::gio::Menu {
 // state changes.
 relm4::new_action_group!(AppMenuActionGroup, "win");
 relm4::new_stateless_action!(PreferencesAction, AppMenuActionGroup, "preferences");
+relm4::new_stateless_action!(NewPlaylistAction, AppMenuActionGroup, "new-playlist");
 relm4::new_stateless_action!(ShortcutsAction, AppMenuActionGroup, "shortcuts");
 relm4::new_stateless_action!(AboutAction, AppMenuActionGroup, "about");
 relm4::new_stateless_action!(PlayPauseAction, AppMenuActionGroup, "play-pause");
@@ -96,6 +97,10 @@ pub(super) fn register_actions(
     let s = sender.clone();
     group.add_action(RelmAction::<PreferencesAction>::new_stateless(move |_| {
         s.input(AppMsg::ShowPreferences)
+    }));
+    let s = sender.clone();
+    group.add_action(RelmAction::<NewPlaylistAction>::new_stateless(move |_| {
+        s.input(AppMsg::ShowCreatePlaylist)
     }));
     let s = sender.clone();
     group.add_action(RelmAction::<ShortcutsAction>::new_stateless(move |_| {
@@ -319,6 +324,62 @@ pub(super) fn show_shortcuts(parent: &adw::ApplicationWindow) {
     dialog.present(Some(parent));
 }
 
+pub(super) fn show_credits(
+    parent: &adw::ApplicationWindow,
+    credits: &[crate::music::client::SongCredit],
+) {
+    let body = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(18)
+        .margin_top(20)
+        .margin_bottom(24)
+        .margin_start(24)
+        .margin_end(24)
+        .build();
+    if credits.is_empty() {
+        body.append(
+            &adw::StatusPage::builder()
+                .icon_name("avatar-default-symbolic")
+                .title("No credits supplied")
+                .description("Apple Music did not return credits for this recording.")
+                .build(),
+        );
+    } else {
+        for credit in credits {
+            let role = gtk::Label::builder()
+                .xalign(0.0)
+                .wrap(true)
+                .css_classes(["title-4", "accent"])
+                .build();
+            role.set_label(&credit.role);
+            let names = gtk::Label::builder()
+                .xalign(0.0)
+                .wrap(true)
+                .selectable(true)
+                .build();
+            names.set_label(&credit.names.join(", "));
+            body.append(&role);
+            body.append(&names);
+        }
+    }
+
+    let toolbar = adw::ToolbarView::new();
+    toolbar.add_top_bar(&adw::HeaderBar::new());
+    toolbar.set_content(Some(
+        &gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .child(&body)
+            .build(),
+    ));
+    let dialog = adw::Dialog::builder()
+        .title("Song Credits")
+        .content_width(480)
+        .content_height(520)
+        .child(&toolbar)
+        .build();
+    dialog.present(Some(parent));
+}
+
 impl AppModel {
     /// The first-run gate.
     ///
@@ -503,10 +564,29 @@ impl AppModel {
         let dialog = adw::PreferencesDialog::new();
         let page = adw::PreferencesPage::new();
 
-        let appearance = adw::PreferencesGroup::builder().title("Appearance").build();
+        let appearance = adw::PreferencesGroup::builder()
+            .title(crate::i18n::tr("Appearance"))
+            .build();
+        let language_names: Vec<&str> = crate::i18n::Language::ALL
+            .iter()
+            .map(|language| language.label())
+            .collect();
+        let language = adw::ComboRow::builder()
+            .title(crate::i18n::tr("Language"))
+            .subtitle("Applies after restarting Jamelade")
+            .model(&gtk::StringList::new(&language_names))
+            .selected(self.settings.language.index())
+            .build();
+        {
+            let sender = sender.clone();
+            language.connect_selected_notify(move |row| {
+                sender.input(AppMsg::SetLanguage(row.selected()));
+            });
+        }
+        appearance.add(&language);
         let theme_names: Vec<&str> = Theme::ALL.iter().map(|theme| theme.label()).collect();
         let theme = adw::ComboRow::builder()
-            .title("Theme")
+            .title(crate::i18n::tr("Theme"))
             .model(&gtk::StringList::new(&theme_names))
             .selected(self.settings.theme.index())
             .build();
@@ -520,7 +600,7 @@ impl AppModel {
 
         let names: Vec<&str> = Accent::ALL.iter().map(|a| a.label()).collect();
         let accent = adw::ComboRow::builder()
-            .title("Accent Colour")
+            .title(crate::i18n::tr("Accent Colour"))
             .model(&gtk::StringList::new(&names))
             .selected(Accent::parse(&self.settings.accent).index())
             .build();
@@ -536,7 +616,7 @@ impl AppModel {
         // extracted colours. Off, named themes own every surface and stock
         // Light/Dark fall back to their quiet Jamkin-accented material.
         let backdrop = adw::SwitchRow::builder()
-            .title("Album Liquid Glass")
+            .title(crate::i18n::tr("Album Liquid Glass"))
             .subtitle("Blend the current cover and its colours through the window")
             .active(self.settings.player_backdrop)
             .build();
@@ -549,7 +629,7 @@ impl AppModel {
         appearance.add(&backdrop);
 
         let glass_row = adw::ActionRow::builder()
-            .title("Transparency &amp; Blur")
+            .title(crate::i18n::tr("Transparency &amp; Blur"))
             .subtitle("Higher values reveal more album art; 100 is fully clear")
             .build();
         let glass = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 5.0);
@@ -573,7 +653,7 @@ impl AppModel {
         appearance.add(&glass_row);
 
         let lyric_colour_row = adw::ActionRow::builder()
-            .title("Nearby Lyric Colour")
+            .title(crate::i18n::tr("Nearby Lyric Colour"))
             .subtitle("Balances Jamkin colour across the previous and upcoming lines")
             .build();
         let lyric_colour = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 100.0, 5.0);
@@ -595,7 +675,7 @@ impl AppModel {
         appearance.add(&lyric_colour_row);
 
         let lyric_size_row = adw::ActionRow::builder()
-            .title("Lyric Text Size")
+            .title(crate::i18n::tr("Lyric Text Size"))
             .subtitle("Scales the full lyrics view and Desktop Jamkin bubble")
             .build();
         let lyric_size = gtk::Scale::with_range(
@@ -622,12 +702,12 @@ impl AppModel {
         appearance.add(&lyric_size_row);
 
         let jamkin = adw::PreferencesGroup::builder()
-            .title("Jamkin Companion")
+            .title(crate::i18n::tr("Jamkin Companion"))
             .description("Appears beside lyrics; Match Jamkin also follows its palette")
             .build();
         let companion_names: Vec<&str> = Companion::ALL.iter().map(|c| c.label()).collect();
         let companion = adw::ComboRow::builder()
-            .title("Companion")
+            .title(crate::i18n::tr("Companion"))
             .subtitle(self.settings.companion.personality())
             .model(&gtk::StringList::new(&companion_names))
             .selected(self.settings.companion.index())
@@ -656,7 +736,7 @@ impl AppModel {
         jamkin.add(&companion);
 
         let quality = adw::ComboRow::builder()
-            .title("Jamkin Image Quality")
+            .title(crate::i18n::tr("Jamkin Image Quality"))
             .subtitle(self.settings.jamkin_quality.subtitle())
             .model(&gtk::StringList::new(&[
                 "Automatic",
@@ -676,7 +756,7 @@ impl AppModel {
         jamkin.add(&quality);
 
         let reduced_motion = adw::SwitchRow::builder()
-            .title("Reduce Jamkin Motion")
+            .title(crate::i18n::tr("Reduce Jamkin Motion"))
             .subtitle("Uses a still pose and makes Edge Walk moves instant")
             .active(self.settings.jamkin_reduced_motion)
             .build();
@@ -700,7 +780,7 @@ impl AppModel {
         launcher_preview.set_overflow(gtk::Overflow::Hidden);
         set_launcher_preview(&launcher_preview, self.settings.launcher_icon);
         let launcher_icon = adw::ComboRow::builder()
-            .title("App Icon")
+            .title(crate::i18n::tr("App Icon"))
             .subtitle(crate::launcher_icon::PREFERENCE_HELP)
             .subtitle_lines(3)
             .model(&gtk::StringList::new(&companion_names))
@@ -718,7 +798,7 @@ impl AppModel {
         }
         jamkin.add(&launcher_icon);
         let desktop_jamkin = adw::SwitchRow::builder()
-            .title("Desktop Jamkin")
+            .title(crate::i18n::tr("Desktop Jamkin"))
             .subtitle("Drag to move, hover for the current lyric, click to open Lyrics")
             .active(self.settings.desktop_jamkin)
             .build();
@@ -731,7 +811,7 @@ impl AppModel {
         jamkin.add(&desktop_jamkin);
 
         let stay_visible = adw::SwitchRow::builder()
-            .title("Keep Jamkin When Window Closes")
+            .title(crate::i18n::tr("Keep Jamkin When Window Closes"))
             .subtitle("Leaves the companion visible while music continues in the background")
             .active(self.settings.desktop_jamkin_stay_visible)
             .build();
@@ -744,7 +824,7 @@ impl AppModel {
         jamkin.add(&stay_visible);
 
         let size_row = adw::ActionRow::builder()
-            .title("Desktop Jamkin Size")
+            .title(crate::i18n::tr("Desktop Jamkin Size"))
             .subtitle("Changes the floating companion immediately")
             .build();
         let size = gtk::Scale::with_range(
@@ -771,7 +851,7 @@ impl AppModel {
         jamkin.add(&size_row);
 
         let opacity_row = adw::ActionRow::builder()
-            .title("Desktop Jamkin Opacity")
+            .title(crate::i18n::tr("Desktop Jamkin Opacity"))
             .subtitle("Changes the sprite only; hover lyrics stay fully readable")
             .build();
         let opacity = gtk::Scale::with_range(
@@ -799,7 +879,7 @@ impl AppModel {
 
         let above_supported = JamkinMode::keep_above_supported();
         let keep_above = adw::SwitchRow::builder()
-            .title("Keep Jamkin Above Other Windows")
+            .title(crate::i18n::tr("Keep Jamkin Above Other Windows"))
             .subtitle(if above_supported {
                 "Draws the Desktop Jamkin over maximized windows"
             } else {
@@ -814,7 +894,7 @@ impl AppModel {
         jamkin.add(&keep_above);
 
         let edge_walk = adw::SwitchRow::builder()
-            .title("Edge Walk")
+            .title(crate::i18n::tr("Edge Walk"))
             .subtitle(if above_supported {
                 "Periodically walks screen edges and changes corners to reduce static OLED wear"
             } else {
@@ -851,10 +931,10 @@ impl AppModel {
         // past it, and pointing at the README from inside a settings dialog is
         // not something a preferences pane should do.
         let notifications = adw::PreferencesGroup::builder()
-            .title("Notifications")
+            .title(crate::i18n::tr("Notifications"))
             .build();
         let notify = adw::SwitchRow::builder()
-            .title("Notify on track change")
+            .title(crate::i18n::tr("Notify on track change"))
             .subtitle("When a new song starts and Jamelade is not in focus")
             .active(self.settings.notify_track_change)
             .build();
@@ -867,12 +947,12 @@ impl AppModel {
         notifications.add(&notify);
 
         let connections = adw::PreferencesGroup::builder()
-            .title("Connections")
+            .title(crate::i18n::tr("Connections"))
             .description("Connections are optional and off by default")
             .build();
         let discord_available = crate::discord::Presence::available();
         let discord = adw::SwitchRow::builder()
-            .title("Discord Activity")
+            .title(crate::i18n::tr("Discord Activity"))
             .subtitle(if discord_available {
                 "Shares the current title, artist, album and selected Jamkin with the local Discord app"
             } else {
@@ -889,14 +969,64 @@ impl AppModel {
         }
         connections.add(&discord);
 
+        let shortcuts = adw::SwitchRow::builder()
+            .title(crate::i18n::tr("Global Shortcuts"))
+            .subtitle(
+                "Configure play, next, previous and Lyrics through your desktop's secure portal",
+            )
+            .active(self.settings.global_shortcuts)
+            .build();
+        {
+            let sender = sender.clone();
+            shortcuts.connect_active_notify(move |row| {
+                sender.input(if row.is_active() {
+                    AppMsg::ConfigureGlobalShortcuts
+                } else {
+                    AppMsg::DisableGlobalShortcuts
+                });
+            });
+        }
+        connections.add(&shortcuts);
+
+        let listenbrainz = adw::ActionRow::builder()
+            .title(crate::i18n::tr("ListenBrainz Scrobbling"))
+            .subtitle(if self.settings.listenbrainz_scrobbling {
+                "Enabled; submits completed-listen metadata to listenbrainz.org"
+            } else {
+                "Optional; sends title, artist, album, duration and start time when enabled"
+            })
+            .build();
+        let listenbrainz_button = gtk::Button::builder()
+            .label(if self.settings.listenbrainz_scrobbling {
+                crate::i18n::tr("Disable")
+            } else {
+                crate::i18n::tr("Set up…")
+            })
+            .valign(gtk::Align::Center)
+            .build();
+        {
+            let sender = sender.clone();
+            let enabled = self.settings.listenbrainz_scrobbling;
+            listenbrainz_button.connect_clicked(move |_| {
+                sender.input(if enabled {
+                    AppMsg::DisableListenBrainz
+                } else {
+                    AppMsg::ShowListenBrainzSetup
+                });
+            });
+        }
+        listenbrainz.add_suffix(&listenbrainz_button);
+        listenbrainz.set_activatable_widget(Some(&listenbrainz_button));
+        connections.add(&listenbrainz);
+
         let privacy = adw::PreferencesGroup::builder()
-            .title("Lyrics privacy")
+            .title(crate::i18n::tr("Lyrics privacy"))
             .description(
                 "Apple Music is tried first through your existing session. Third-party fallbacks are separately opt-in, contacted one at a time, and also see your IP address.",
             )
             .build();
         let apple_lyrics = adw::ActionRow::builder()
-            .title("Lyrics from Apple Music")
+            .title(crate::i18n::tr("Lyrics from Apple Music"))
             .subtitle(
                 "First choice; sends only the playing song's catalog ID to Apple, which already receives playback requests",
             )
@@ -909,7 +1039,7 @@ impl AppModel {
         );
         privacy.add(&apple_lyrics);
         let lyrics = adw::SwitchRow::builder()
-            .title("Fallback lyrics from LRCLIB")
+            .title(crate::i18n::tr("Fallback lyrics from LRCLIB"))
             .subtitle(
                 "When Apple has no match, sends title, artist, album and duration to lrclib.net; never Apple credentials",
             )
@@ -923,7 +1053,7 @@ impl AppModel {
         }
         privacy.add(&lyrics);
         let lyrics_ovh = adw::SwitchRow::builder()
-            .title("Fallback lyrics from Lyrics.ovh")
+            .title(crate::i18n::tr("Fallback lyrics from Lyrics.ovh"))
             .subtitle(
                 "Last resort; sends artist and title to its open-source server, which may consult several lyric sites",
             )

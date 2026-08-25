@@ -40,8 +40,8 @@ function harness() {
           return { status: 200, data: { data: [{ id: '123', type: 'albums' }] } }
         },
       },
-      async post(path) {
-        apiRequests.push({ method: 'post', path })
+      async post(path, body) {
+        apiRequests.push({ method: 'post', path, ...(body === undefined ? {} : { body }) })
         return { status: 202, data: null }
       },
     },
@@ -102,7 +102,9 @@ test('the browser broker permits named Apple routes and refuses arbitrary URLs',
   app.send({ cmd: 'apiRequest', requestId: 8, method: 'get', path: '//example.com/collect' })
   await new Promise((resolve) => setImmediate(resolve))
 
-  assert.deepEqual(app.apiRequests, [
+  // Bodies originate in the VM realm; round-trip them so prototype identity
+  // cannot make structurally identical payloads compare unequal.
+  assert.deepEqual(JSON.parse(JSON.stringify(app.apiRequests)), [
     {
       method: 'get',
       path: '/v1/catalog/de/albums/123?include=tracks',
@@ -143,6 +145,50 @@ test('the browser broker waits for MusicKit API startup instead of failing the l
     (event) => event.event === 'api-response' && event.requestId === 10,
   )
   assert.equal(response.status, 200)
+})
+
+test('playlist writes are typed, bounded, and remain on documented Apple routes', async () => {
+  const app = harness()
+  app.send({
+    cmd: 'createPlaylist',
+    requestId: 20,
+    name: 'Road trip',
+    description: 'Example',
+    songs: ['1000000001'],
+  })
+  app.send({
+    cmd: 'addPlaylistTracks',
+    requestId: 21,
+    playlistId: 'p.example',
+    songs: ['1000000002'],
+  })
+  app.send({
+    cmd: 'addPlaylistTracks',
+    requestId: 22,
+    playlistId: '../../outside',
+    songs: ['1000000003'],
+  })
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.deepEqual(JSON.parse(JSON.stringify(app.apiRequests)), [
+    {
+      method: 'post',
+      path: '/v1/me/library/playlists',
+      body: {
+        attributes: { name: 'Road trip', description: 'Example' },
+        relationships: { tracks: { data: [{ id: '1000000001', type: 'songs' }] } },
+      },
+    },
+    {
+      method: 'post',
+      path: '/v1/me/library/playlists/p.example/tracks',
+      body: { data: [{ id: '1000000002', type: 'songs' }] },
+    },
+  ])
+  assert.equal(
+    app.events.find((event) => event.event === 'api-response' && event.requestId === 22).status,
+    400,
+  )
 })
 
 test('the signed-in account storefront wins over the page storefront', () => {

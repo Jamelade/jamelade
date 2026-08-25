@@ -51,14 +51,17 @@ use crate::settings::{Section, Settings, Theme};
 mod background;
 mod chrome;
 mod discovery;
+mod global_shortcuts;
 mod library;
 mod osd;
 mod pages;
 mod pins;
 mod playback;
 mod playlist_art;
+mod playlist_edit;
 mod queue;
 mod row_menu;
+mod scrobbling;
 mod segment_loop;
 mod status;
 mod supervise;
@@ -66,7 +69,7 @@ mod view;
 mod wiring;
 mod writes;
 
-use chrome::{icon, register_actions, show_about, show_shortcuts};
+use chrome::{icon, register_actions, show_about, show_credits, show_shortcuts};
 use queue::Start;
 use supervise::{respawn_sidecar, start_sidecar};
 
@@ -156,6 +159,9 @@ pub struct AppModel {
     /// that was the full duration on three boundaries and zero on a fourth,
     /// depending purely on which event won the race.
     progress_mark: std::cell::Cell<(u64, u64)>,
+    /// Process-local pause timer. It is intentionally not restored after an
+    /// application restart.
+    sleep_timer: crate::sleep_timer::Timer,
 
     /// Credential-free projection of the browser-owned Apple session.
     apple_session: Option<AppleSession>,
@@ -198,6 +204,10 @@ pub struct AppModel {
     /// Optional local Discord IPC. It owns no network client and stays
     /// completely dormant until the separately persisted opt-in is on.
     discord_presence: crate::discord::Presence,
+    global_shortcuts_stop: Option<tokio::sync::watch::Sender<bool>>,
+    /// Dormant until the separate ListenBrainz consent and encrypted token are
+    /// both present. It remembers only the current track's submission state.
+    scrobbler: crate::scrobble::Scrobbler,
     /// A portal confirmation is in flight. One at a time prevents two desktop
     /// dialogs racing to decide which launcher should win.
     launcher_icon_pending: Option<Companion>,
@@ -205,6 +215,10 @@ pub struct AppModel {
     lyrics_loading: bool,
     lyrics_generation: u64,
     lyrics_cache: std::collections::HashMap<crate::lyrics::Query, crate::lyrics::Lyrics>,
+    /// Local per-recording lyric timing corrections. Only numeric catalog IDs
+    /// and millisecond offsets are persisted; lyric text and listening history
+    /// never enter this store.
+    lyric_offsets: crate::lyric_timing::Offsets,
     /// The rows on screen — the filtered view. A `ListView`, so its cost is
     /// the number of rows visible rather than the size of the library.
     library: TypedListView<LibraryItem, gtk::NoSelection>,
@@ -542,6 +556,8 @@ pub enum AppMsg {
     SetRepeat(Repeat),
     CycleSegmentLoop,
     SegmentLoopTick,
+    SetSleepTimer(crate::sleep_timer::Choice),
+    SleepTimerExpired(u64),
     SetSort(SortBy),
     /// Narrow the catalog search to one kind of result, or widen it again.
     SetCatalogFilter(CatalogFilter),
@@ -607,6 +623,7 @@ pub enum AppMsg {
     /// Star or un-star the current song using the same Apple write path as a
     /// song row's options menu.
     TogglePlayingFavorite,
+    ShowCredits,
     /// Resolve the current catalog song's album and open its Jamelade page.
     OpenPlayingAlbum,
     /// Resolve the current catalog song's artist and open its Jamelade page.
@@ -614,6 +631,10 @@ pub enum AppMsg {
     /// Copy the public link stored on a loaded album or playlist page.
     CopyPageLink {
         page: u64,
+    },
+    ExportPlaylist {
+        page: u64,
+        format: crate::playlist_export::Format,
     },
     /// Resolve an album page's artist from its first catalog song and open it.
     OpenAlbumArtist {
@@ -655,6 +676,18 @@ pub enum AppMsg {
     /// its click handler, and the reducer already knows which view is showing.
     ReloadCurrentSection,
     ShowPreferences,
+    ShowCreatePlaylist,
+    CreatePlaylist {
+        name: String,
+        description: String,
+    },
+    ShowAddToPlaylist {
+        catalog_id: String,
+    },
+    AddTrackToPlaylist {
+        playlist_id: String,
+        catalog_id: String,
+    },
     ShowShortcuts,
     /// The hide-timer fired: the panel has been up long enough.
     HideVolumeOsd,
@@ -686,6 +719,7 @@ pub enum AppMsg {
     /// Open the Ko-fi page in a browser.
     OpenSupport,
     SetTheme(u32),
+    SetLanguage(u32),
     SetAccent(crate::style::Accent),
     SetCompanion(Companion),
     /// Select bundled high-resolution or original Jamkin animation frames.
@@ -713,6 +747,11 @@ pub enum AppMsg {
     },
     /// Share current-track display metadata with the local Discord client.
     SetDiscordActivity(bool),
+    ConfigureGlobalShortcuts,
+    DisableGlobalShortcuts,
+    ShowListenBrainzSetup,
+    EnableListenBrainz(String),
+    DisableListenBrainz,
     /// Whether the cover is painted behind the whole window (#145).
     SetPlayerBackdrop(bool),
     /// Combined surface transparency and real artwork blur; 100 is fully clear.
@@ -721,6 +760,10 @@ pub enum AppMsg {
     SetLyricsAccentStrength(u8),
     /// Text scale for the full lyrics view and desktop hover bubble.
     SetLyricsFontScale(u8),
+    /// Shift synchronized lyrics for the current recording. Zero resets it;
+    /// other values are signed deltas in milliseconds.
+    AdjustLyricTiming(i32),
+    SelectLyricVariant(usize),
     SetNotifyTrackChange(bool),
     /// LRCLIB metadata disclosure; off until explicitly enabled.
     SetLyricsEnabled(bool),
@@ -902,6 +945,26 @@ pub enum CommandMsg {
         cover: Option<artwork::Decoded>,
     },
     PlaylistTileArt(playlist_art::Finished),
+    PlaylistWritten {
+        generation: u64,
+        created: bool,
+        result: Result<(), String>,
+    },
+    Credits {
+        generation: u64,
+        result: Result<Vec<crate::music::client::SongCredit>, String>,
+    },
+    GlobalShortcutsReady(Result<(), String>),
+    GlobalShortcut(String),
+    ListenBrainzTokenLoaded(Result<Option<crate::scrobble::Token>, String>),
+    ListenBrainzTokenStored {
+        token: crate::scrobble::Token,
+        result: Result<(), String>,
+    },
+    ListenBrainzSubmitted {
+        key: String,
+        result: Result<(), String>,
+    },
 }
 
 /// The drawer emits the same outputs as the bar, so they map the same way.
@@ -922,6 +985,8 @@ fn map_player_output(out: NowPlayingOutput) -> AppMsg {
         NowPlayingOutput::OpenArtist => AppMsg::OpenPlayingArtist,
         NowPlayingOutput::CopyLink => AppMsg::CopyPlayingLink,
         NowPlayingOutput::ToggleFavorite => AppMsg::TogglePlayingFavorite,
+        NowPlayingOutput::SetSleepTimer(choice) => AppMsg::SetSleepTimer(choice),
+        NowPlayingOutput::ShowCredits => AppMsg::ShowCredits,
     }
 }
 
@@ -1138,7 +1203,7 @@ impl Component for AppModel {
 
                                         pack_start = &gtk::ToggleButton {
                                             set_icon_name: "sidebar-show-symbolic",
-                                            set_tooltip_text: Some("Toggle Sidebar"),
+                                            set_tooltip_text: Some(crate::i18n::tr("Toggle Sidebar")),
                                             add_css_class: "flat",
                                             #[watch]
                                             set_active: model.show_sidebar,
@@ -1152,7 +1217,7 @@ impl Component for AppModel {
                                         // the sidebar header.
                                         pack_start = &gtk::MenuButton {
                                             set_icon_name: "preferences-system-symbolic",
-                                            set_tooltip_text: Some("Settings and App Menu"),
+                                            set_tooltip_text: Some(crate::i18n::tr("Settings and App Menu")),
                                             add_css_class: "flat",
                                             set_menu_model: Some(&primary_menu),
                                         },
@@ -1169,7 +1234,7 @@ impl Component for AppModel {
                                         #[name = "search_button"]
                                         pack_start = &gtk::ToggleButton {
                                             set_icon_name: "system-search-symbolic",
-                                            set_tooltip_text: Some("Search"),
+                                            set_tooltip_text: Some(crate::i18n::tr("Search")),
                                             add_css_class: "flat",
                                             #[watch]
                                             set_visible: model.narrow_header && model.view.searchable(),
@@ -1302,7 +1367,7 @@ impl Component for AppModel {
                                             // GtkStack` on every launch.
                                             add_named[Some("reload")] = &gtk::Button {
                                                 set_icon_name: "view-refresh-symbolic",
-                                                set_tooltip_text: Some("Reload"),
+                                                set_tooltip_text: Some(crate::i18n::tr("Reload")),
                                                 add_css_class: "flat",
                                                 #[watch]
                                                 set_sensitive: model.controls_live(),
@@ -1336,7 +1401,7 @@ impl Component for AppModel {
                                         #[name = "sort_button"]
                                         pack_end = &gtk::MenuButton {
                                             set_icon_name: "view-sort-descending-symbolic",
-                                            set_tooltip_text: Some("Sort"),
+                                            set_tooltip_text: Some(crate::i18n::tr("Sort")),
                                             add_css_class: "flat",
                                             #[watch]
                                             // Every library section, not just
@@ -1360,7 +1425,7 @@ impl Component for AppModel {
                                         pack_end = &gtk::MenuButton {
                                             add_css_class: "flat",
                                             set_always_show_arrow: true,
-                                            set_tooltip_text: Some("What to search for"),
+                                            set_tooltip_text: Some(crate::i18n::tr("What to search for")),
                                             #[watch]
                                             set_visible: model.view == View::Search,
                                             // A label rather than an icon, for
@@ -1521,7 +1586,7 @@ impl Component for AppModel {
                                         // nonsense — this is an invitation.
                                         add_named[Some("search-prompt")] = &adw::StatusPage {
                                             set_icon_name: Some("system-search-symbolic"),
-                                            set_title: "Search Apple Music",
+                                            set_title: crate::i18n::tr("Search Apple Music"),
                                             set_description: Some(
                                                 "Find songs from the whole catalogue, not just your library.",
                                             ),
@@ -1532,7 +1597,7 @@ impl Component for AppModel {
                                         // are different problems.
                                         add_named[Some("no-results")] = &adw::StatusPage {
                                             set_icon_name: Some("system-search-symbolic"),
-                                            set_title: "No matches",
+                                            set_title: crate::i18n::tr("No matches"),
                                             #[watch]
                                             set_description: Some(&match model.view {
                                                 View::Explore => "Apple Music returned no discovery sections.".into(),
@@ -1583,6 +1648,7 @@ impl Component for AppModel {
         root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
+        crate::i18n::set_language(settings.language);
         // The bar emits intent, never commands — `app/mod.rs` is the only place
         // that talks to the sidecar (rule 9).
         let now_playing = NowPlaying::builder()
@@ -1602,6 +1668,8 @@ impl Component for AppModel {
                 NowPlayingOutput::OpenArtist => AppMsg::OpenPlayingArtist,
                 NowPlayingOutput::CopyLink => AppMsg::CopyPlayingLink,
                 NowPlayingOutput::ToggleFavorite => AppMsg::TogglePlayingFavorite,
+                NowPlayingOutput::SetSleepTimer(choice) => AppMsg::SetSleepTimer(choice),
+                NowPlayingOutput::ShowCredits => AppMsg::ShowCredits,
             });
 
         let library: TypedListView<LibraryItem, gtk::NoSelection> = TypedListView::new();
@@ -1697,12 +1765,16 @@ impl Component for AppModel {
         });
         let preferences_sender = sender.clone();
         let lyrics_seek_sender = sender.clone();
+        let lyrics_timing_sender = sender.clone();
+        let lyric_variant_sender = sender.clone();
         let lyrics_view = LyricsView::new(
             settings.companion,
             settings.jamkin_quality,
             settings.jamkin_reduced_motion,
             move || preferences_sender.input(AppMsg::ShowPreferences),
             move |position_ms| lyrics_seek_sender.input(AppMsg::Seek(position_ms)),
+            move |delta_ms| lyrics_timing_sender.input(AppMsg::AdjustLyricTiming(delta_ms)),
+            move |index| lyric_variant_sender.input(AppMsg::SelectLyricVariant(index)),
         );
         let open_sender = sender.clone();
         let disable_sender = sender.clone();
@@ -1731,11 +1803,14 @@ impl Component for AppModel {
             lyrics_view,
             jamkin_mode,
             discord_presence,
+            global_shortcuts_stop: None,
+            scrobbler: crate::scrobble::Scrobbler::default(),
             launcher_icon_pending: None,
             lyrics_for: None,
             lyrics_loading: false,
             lyrics_generation: 0,
             lyrics_cache: std::collections::HashMap::new(),
+            lyric_offsets: crate::lyric_timing::Offsets::load(),
             library,
             show_queue: false,
             show_sidebar: settings.show_sidebar,
@@ -1834,6 +1909,7 @@ impl Component for AppModel {
             menu_sender: sender.clone(),
             last_command: std::cell::RefCell::new(None),
             progress_mark: std::cell::Cell::new((0, 0)),
+            sleep_timer: crate::sleep_timer::Timer::default(),
             apple_session: None,
             account_generation: 0,
             sidecar: None,
@@ -1857,8 +1933,18 @@ impl Component for AppModel {
         let primary_menu = gtk::gio::Menu::new();
         {
             let preferences = gtk::gio::Menu::new();
-            preferences.append(Some("_Preferences"), Some("win.preferences"));
+            preferences.append(
+                Some(crate::i18n::tr("_Preferences")),
+                Some("win.preferences"),
+            );
             primary_menu.append_section(None, &preferences);
+
+            let library = gtk::gio::Menu::new();
+            library.append(
+                Some(crate::i18n::tr("_New Playlist…")),
+                Some("win.new-playlist"),
+            );
+            primary_menu.append_section(None, &library);
 
             // **First, in its own section.** It is the one item here that is
             // not about running the app, and under Preferences and About it
@@ -1871,25 +1957,31 @@ impl Component for AppModel {
             // little button rows, not for an ordinary entry. A heart was set
             // here, resolved from the theme, and simply never appeared.
             let support = gtk::gio::Menu::new();
-            support.append(Some("_Buy Slipmat Creator a Coffee"), Some("win.support"));
+            support.append(
+                Some(crate::i18n::tr("_Buy Slipmat Creator a Coffee")),
+                Some("win.support"),
+            );
             primary_menu.append_section(None, &support);
 
             let section = gtk::gio::Menu::new();
-            section.append(Some("_Keyboard Shortcuts"), Some("win.shortcuts"));
-            section.append(Some("_About Jamelade"), Some("win.about"));
+            section.append(
+                Some(crate::i18n::tr("_Keyboard Shortcuts")),
+                Some("win.shortcuts"),
+            );
+            section.append(Some(crate::i18n::tr("_About Jamelade")), Some("win.about"));
             primary_menu.append_section(None, &section);
 
             // Its own section: signing out is an account action, not app
             // furniture, and it should not sit next to About.
             let account = gtk::gio::Menu::new();
-            account.append(Some("_Sign Out"), Some("win.sign-out"));
+            account.append(Some(crate::i18n::tr("_Sign Out")), Some("win.sign-out"));
             primary_menu.append_section(None, &account);
 
             // Quit was missing from this menu entirely, while the shortcuts
             // dialog advertised `Ctrl`+`Q` — so the app claimed a way out it
             // never showed. Last section, per the GNOME convention.
             let quit = gtk::gio::Menu::new();
-            quit.append(Some("_Quit"), Some("app.quit"));
+            quit.append(Some(crate::i18n::tr("_Quit")), Some("app.quit"));
             primary_menu.append_section(None, &quit);
         }
 
@@ -1936,11 +2028,23 @@ impl Component for AppModel {
 
         start_sidecar(&sender);
 
+        if model.settings.global_shortcuts {
+            sender.input(AppMsg::ConfigureGlobalShortcuts);
+        }
+        if model.settings.listenbrainz_scrobbling {
+            sender.oneshot_command(async {
+                CommandMsg::ListenBrainzTokenLoaded(crate::scrobble::load_token().await)
+            });
+        }
+
         ComponentParts { model, widgets }
     }
 
     fn shutdown(&mut self, _widgets: &mut Self::Widgets, _output: relm4::Sender<Self::Output>) {
         self.clear_segment_loop();
+        if let Some(stop) = self.global_shortcuts_stop.take() {
+            let _ = stop.send(true);
+        }
         self.jamkin_mode.set_enabled(false);
         self.discord_presence.set_enabled(false);
         // A now-playing notification must not outlive the player that sent it.
@@ -2211,6 +2315,26 @@ impl AppModel {
                 }),
                 None => self.toast("Apple doesn't expose an artist for this track"),
             },
+            AppMsg::ShowCredits => {
+                let Some(catalog_id) = self.playing_catalog_id() else {
+                    self.toast("Credits are unavailable for this track");
+                    return;
+                };
+                let Some(client) = self.client() else {
+                    self.toast("Not connected yet");
+                    return;
+                };
+                let generation = self.account_generation;
+                sender.oneshot_command(async move {
+                    CommandMsg::Credits {
+                        generation,
+                        result: client
+                            .song_credits(&catalog_id)
+                            .await
+                            .map_err(|error| format!("{error:#}")),
+                    }
+                });
+            }
             AppMsg::CopyPageLink { page } => {
                 let link = self
                     .pages
@@ -2222,6 +2346,47 @@ impl AppModel {
                     None => self.toast("No public Apple Music link is available"),
                 }
             }
+            AppMsg::ExportPlaylist { page, format } => {
+                let Some((title, tracks)) = self
+                    .pages
+                    .iter()
+                    .find(|candidate| candidate.id == page)
+                    .and_then(DetailPage::export_data)
+                else {
+                    self.toast("This playlist is not ready to export");
+                    return;
+                };
+                let Ok(contents) = crate::playlist_export::render(&title, &tracks, format) else {
+                    self.toast("Could not prepare that export");
+                    return;
+                };
+                let dialog = gtk::FileDialog::builder()
+                    .title("Export Playlist")
+                    .accept_label("Export")
+                    .initial_name(crate::playlist_export::suggested_name(&title, format))
+                    .modal(true)
+                    .build();
+                let root = root.clone();
+                let toaster = self.toaster.clone();
+                gtk::glib::spawn_future_local(async move {
+                    let Ok(file) = dialog.save_future(Some(&root)).await else {
+                        return;
+                    };
+                    let result = file
+                        .replace_contents_future(
+                            contents,
+                            None,
+                            false,
+                            gtk::gio::FileCreateFlags::REPLACE_DESTINATION,
+                        )
+                        .await;
+                    toaster.add_toast(adw::Toast::new(if result.is_ok() {
+                        "Playlist exported"
+                    } else {
+                        "Could not write the playlist export"
+                    }));
+                });
+            }
             AppMsg::SidebarRowChosen(index) => self.sidebar_row_chosen(index, &sender),
             AppMsg::SidebarRowActivated(index) => self.sidebar_row_activated(index, &sender),
             AppMsg::ShowPinPicker => self.show_pin_picker(&sender, root),
@@ -2232,9 +2397,55 @@ impl AppModel {
             AppMsg::Tick => {
                 self.push_snapshot();
                 self.sync_lyrics_position();
+                if self.settings.listenbrainz_scrobbling
+                    && self.player.state.is_playing()
+                    && let Some(item) = self.player.now_playing.as_ref()
+                    && let Some(submission) = self
+                        .scrobbler
+                        .prepare(item, self.player.interpolated_position_ms())
+                {
+                    let key = submission.key().to_owned();
+                    sender.oneshot_command(async move {
+                        CommandMsg::ListenBrainzSubmitted {
+                            key,
+                            result: crate::scrobble::submit(submission).await,
+                        }
+                    });
+                }
             }
             AppMsg::CycleSegmentLoop => self.cycle_segment_loop(&sender),
             AppMsg::SegmentLoopTick => self.enforce_segment_loop(),
+            AppMsg::SetSleepTimer(choice) => {
+                let current = self.playing_catalog_id();
+                if matches!(choice, crate::sleep_timer::Choice::EndOfTrack) && current.is_none() {
+                    self.toast("Start a song before choosing end of track");
+                    return;
+                }
+                let (generation, delay) = self.sleep_timer.set(choice, current.as_deref());
+                self.player_view
+                    .emit(PlayerViewInput::SleepTimerActive(self.sleep_timer.active()));
+                if let Some(delay) = delay {
+                    let sender = sender.clone();
+                    gtk::glib::timeout_add_local_once(delay, move || {
+                        sender.input(AppMsg::SleepTimerExpired(generation));
+                    });
+                }
+                self.toast(match choice {
+                    crate::sleep_timer::Choice::Off => "Sleep timer turned off",
+                    crate::sleep_timer::Choice::EndOfTrack => {
+                        "Playback will pause at the end of this song"
+                    }
+                    _ => "Sleep timer started",
+                });
+            }
+            AppMsg::SleepTimerExpired(generation) => {
+                if self.sleep_timer.expires(generation) {
+                    self.send(Command::Pause);
+                    self.player_view
+                        .emit(PlayerViewInput::SleepTimerActive(false));
+                    self.toast("Sleep timer paused playback");
+                }
+            }
             AppMsg::SearchChanged(query) => {
                 if !self.view.searchable() {
                     return;
@@ -2471,6 +2682,49 @@ impl AppModel {
             }
             AppMsg::ReloadCurrentSection => self.reload(self.view, &sender),
             AppMsg::ShowPreferences => self.show_preferences(&sender, root),
+            AppMsg::ShowCreatePlaylist => self.show_create_playlist(&sender, root),
+            AppMsg::CreatePlaylist { name, description } => {
+                let Some(client) = self.client() else {
+                    self.toast("Not connected yet");
+                    return;
+                };
+                let generation = self.account_generation;
+                self.toast("Creating playlist…");
+                sender.oneshot_command(async move {
+                    CommandMsg::PlaylistWritten {
+                        generation,
+                        created: true,
+                        result: client
+                            .create_playlist(name, description, Vec::new())
+                            .await
+                            .map_err(|error| format!("{error:#}")),
+                    }
+                });
+            }
+            AppMsg::ShowAddToPlaylist { catalog_id } => {
+                self.show_add_to_playlist(catalog_id, &sender, root);
+            }
+            AppMsg::AddTrackToPlaylist {
+                playlist_id,
+                catalog_id,
+            } => {
+                let Some(client) = self.client() else {
+                    self.toast("Not connected yet");
+                    return;
+                };
+                let generation = self.account_generation;
+                self.toast("Adding song to playlist…");
+                sender.oneshot_command(async move {
+                    CommandMsg::PlaylistWritten {
+                        generation,
+                        created: false,
+                        result: client
+                            .add_playlist_tracks(playlist_id, vec![catalog_id])
+                            .await
+                            .map_err(|error| format!("{error:#}")),
+                    }
+                });
+            }
             AppMsg::ShowShortcuts => show_shortcuts(root),
             AppMsg::ShowAbout => show_about(root),
             AppMsg::OpenSupport => chrome::open_support(root),
@@ -2479,6 +2733,15 @@ impl AppModel {
                 self.settings.apply_theme();
                 crate::style::set_theme(self.settings.theme);
                 self.settings.save();
+            }
+            AppMsg::SetLanguage(index) => {
+                let language = crate::i18n::Language::from_index(index);
+                if self.settings.language == language {
+                    return;
+                }
+                self.settings.language = language;
+                self.settings.save();
+                self.toast("Restart Jamelade to apply the interface language");
             }
             AppMsg::SetNotifyTrackChange(on) => {
                 self.settings.notify_track_change = on;
@@ -2960,6 +3223,54 @@ impl AppModel {
                     self.toast("Discord activity is off");
                 }
             }
+            AppMsg::ConfigureGlobalShortcuts => {
+                if self.global_shortcuts_stop.is_some() {
+                    self.toast("Global shortcuts are already connected");
+                    return;
+                }
+                self.global_shortcuts_stop = Some(global_shortcuts::start(&sender));
+            }
+            AppMsg::DisableGlobalShortcuts => {
+                if let Some(stop) = self.global_shortcuts_stop.take() {
+                    let _ = stop.send(true);
+                }
+                self.settings.global_shortcuts = false;
+                self.settings.save();
+                self.toast("Global shortcuts are off");
+            }
+            AppMsg::ShowListenBrainzSetup => {
+                self.show_listenbrainz_setup(&sender, root);
+            }
+            AppMsg::EnableListenBrainz(value) => {
+                let token = match crate::scrobble::Token::parse(value) {
+                    Ok(token) => token,
+                    Err(message) => {
+                        self.toast(message);
+                        return;
+                    }
+                };
+                let saved_token = token.clone();
+                sender.oneshot_command(async move {
+                    CommandMsg::ListenBrainzTokenStored {
+                        token: saved_token,
+                        result: crate::scrobble::store_token(&token).await,
+                    }
+                });
+            }
+            AppMsg::DisableListenBrainz => {
+                self.scrobbler.disable();
+                self.settings.listenbrainz_scrobbling = false;
+                self.settings.save();
+                match crate::scrobble::remove_token() {
+                    Ok(()) => self.toast("ListenBrainz scrobbling is off"),
+                    Err(_error) => {
+                        tracing::warn!("could not remove encrypted ListenBrainz token");
+                        self.toast(
+                            "Scrobbling is off, but its encrypted token could not be removed",
+                        );
+                    }
+                }
+            }
             AppMsg::SetPlayerBackdrop(on) => {
                 self.settings.player_backdrop = on;
                 self.settings.save();
@@ -3005,6 +3316,43 @@ impl AppModel {
                 self.settings.lyrics_font_scale = scale;
                 self.settings.save();
                 crate::style::set_lyrics_font_scale(scale);
+            }
+            AppMsg::AdjustLyricTiming(delta_ms) => {
+                let Some(catalog_id) = self
+                    .lyrics_for
+                    .as_ref()
+                    .and_then(|query| query.catalog_id.clone())
+                else {
+                    self.toast("Timing adjustments need an Apple catalog song");
+                    return;
+                };
+                let current = self.lyric_offsets.get(Some(&catalog_id));
+                let next = if delta_ms == 0 {
+                    0
+                } else {
+                    current.saturating_add(delta_ms).clamp(
+                        crate::lyric_timing::MIN_OFFSET_MS,
+                        crate::lyric_timing::MAX_OFFSET_MS,
+                    )
+                };
+                if self.lyric_offsets.set(&catalog_id, next) {
+                    self.lyrics_view.set_timing_offset(next);
+                    self.sync_lyrics_position();
+                }
+            }
+            AppMsg::SelectLyricVariant(index) => {
+                let Some(query) = self.lyrics_for.as_ref() else {
+                    return;
+                };
+                let Some(lyrics) = self.lyrics_cache.get(query) else {
+                    return;
+                };
+                if index > lyrics.variants.len() {
+                    return;
+                }
+                self.lyrics_view.show_variant(lyrics, index);
+                self.jamkin_mode.show(&lyrics.selected(index));
+                self.sync_lyrics_position();
             }
             AppMsg::SetSort(sort) => {
                 let mut current = self.sorts.get(self.view);
@@ -3479,6 +3827,112 @@ impl AppModel {
                     }
                 }
             }
+            CommandMsg::PlaylistWritten {
+                generation,
+                created,
+                result,
+            } => {
+                if generation != self.account_generation {
+                    return;
+                }
+                match result {
+                    Ok(()) => {
+                        self.toast(if created {
+                            "Playlist created"
+                        } else {
+                            "Song added to playlist"
+                        });
+                        // Apple's write response carries no trustworthy final
+                        // object. Refresh the bounded library projection rather
+                        // than inventing one locally.
+                        self.loading_playlists = false;
+                        self.tried_playlists = false;
+                        self.built_playlists = None;
+                        self.load_playlists(&sender);
+                    }
+                    Err(error) => {
+                        tracing::warn!(created, "playlist write failed");
+                        self.toast(&format!("Playlist change failed: {error}"));
+                    }
+                }
+            }
+            CommandMsg::Credits { generation, result } => {
+                if generation != self.account_generation {
+                    return;
+                }
+                match result {
+                    Ok(credits) => show_credits(root, &credits),
+                    Err(error) => {
+                        tracing::warn!("song credits request failed");
+                        self.toast(&format!("Credits could not load: {error}"));
+                    }
+                }
+            }
+            CommandMsg::GlobalShortcutsReady(result) => match result {
+                Ok(()) => {
+                    // A late portal reply must not undo an explicit disable.
+                    if self.global_shortcuts_stop.is_none() {
+                        return;
+                    }
+                    self.settings.global_shortcuts = true;
+                    self.settings.save();
+                    self.toast("Global shortcuts are ready");
+                }
+                Err(error) => {
+                    self.global_shortcuts_stop = None;
+                    self.settings.global_shortcuts = false;
+                    self.settings.save();
+                    let _ = error;
+                    tracing::warn!("global shortcuts portal failed");
+                    self.toast("Global shortcuts could not be configured");
+                }
+            },
+            CommandMsg::GlobalShortcut(id) => match id.as_str() {
+                "play-pause" => sender.input(AppMsg::PlayPause),
+                "next" => sender.input(AppMsg::Next),
+                "previous" => sender.input(AppMsg::Previous),
+                "lyrics" => sender.input(AppMsg::ShowLyrics),
+                _ => tracing::warn!("desktop portal returned an unknown shortcut"),
+            },
+            CommandMsg::ListenBrainzTokenLoaded(result) => match result {
+                Ok(Some(token)) if self.settings.listenbrainz_scrobbling => {
+                    self.scrobbler.set_token(token);
+                    tracing::info!("ListenBrainz scrobbling is ready");
+                }
+                Ok(None) => {
+                    self.settings.listenbrainz_scrobbling = false;
+                    self.settings.save();
+                }
+                Ok(Some(_)) => {}
+                Err(error) => {
+                    self.settings.listenbrainz_scrobbling = false;
+                    self.settings.save();
+                    let _ = error;
+                    tracing::warn!("ListenBrainz token could not be unlocked");
+                    self.toast("ListenBrainz is off because its token could not be unlocked");
+                }
+            },
+            CommandMsg::ListenBrainzTokenStored { token, result } => match result {
+                Ok(()) => {
+                    self.scrobbler.set_token(token);
+                    self.settings.listenbrainz_scrobbling = true;
+                    self.settings.save();
+                    self.toast("ListenBrainz scrobbling is on");
+                }
+                Err(error) => {
+                    let _ = error;
+                    tracing::warn!("ListenBrainz token could not be stored");
+                    self.toast("ListenBrainz could not be enabled securely");
+                }
+            },
+            CommandMsg::ListenBrainzSubmitted { key, result } => {
+                self.scrobbler.finish(&key, result.is_ok());
+                if let Err(error) = result {
+                    let _ = error;
+                    tracing::warn!("ListenBrainz submission failed");
+                    self.toast("ListenBrainz scrobble failed");
+                }
+            }
             CommandMsg::TileArt {
                 generation,
                 key,
@@ -3803,6 +4257,7 @@ impl AppModel {
     /// about the user.
     fn forget_session(&mut self) {
         self.clear_segment_loop();
+        self.scrobbler.reset_track();
         // Invalidate first. Every async API/artwork task owns credential or
         // account-derived input cloned before it started; none of its results
         // may land after the rest of this function has erased that account.

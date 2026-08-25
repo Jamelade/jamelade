@@ -86,6 +86,8 @@ impl Section {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
     pub theme: Theme,
+    /// UI language. System follows the locale captured at startup.
+    pub language: crate::i18n::Language,
     /// Accent colour id; see `style::Accent`.
     pub accent: String,
     /// The local Jamkin shown beside lyrics and used by the matching palette.
@@ -159,6 +161,13 @@ pub struct Settings {
     /// and its audience; this never implies consent merely from Discord being
     /// installed.
     pub discord_activity: bool,
+    /// Register user-approved playback shortcuts through the desktop portal.
+    /// The compositor owns the actual key bindings; this stores only consent
+    /// to recreate the portal session on launch.
+    pub global_shortcuts: bool,
+    /// Submit completed listens to ListenBrainz. The bearer token is never
+    /// stored here; it lives in a separately encrypted private file.
+    pub listenbrainz_scrobbling: bool,
     /// Permit metadata for the current track to be sent to LRCLIB after Apple
     /// Music has no useful lyric. Off by default: this is a third-party
     /// disclosure and requires an explicit opt in even though it never contains
@@ -236,6 +245,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             theme: Theme::Light,
+            language: crate::i18n::Language::System,
             // The selected Jamkin supplies the colour unless someone chooses a
             // conventional or system accent in Preferences.
             accent: "jamkin".into(),
@@ -272,6 +282,8 @@ impl Default for Settings {
             lyrics_font_scale: DEFAULT_LYRICS_FONT_SCALE,
             notify_track_change: false,
             discord_activity: false,
+            global_shortcuts: false,
+            listenbrainz_scrobbling: false,
             lyrics_enabled: false,
             lyrics_ovh_enabled: false,
             // Nothing pinned until somebody pins something. An app that
@@ -319,11 +331,20 @@ impl Settings {
         if let Ok(theme) = file.string(GROUP, "theme") {
             settings.theme = Theme::parse(&theme);
         }
+        if let Ok(language) = file.string(GROUP, "language") {
+            settings.language = crate::i18n::Language::parse(&language);
+        }
         if let Ok(notify) = file.boolean(GROUP, "notify-track-change") {
             settings.notify_track_change = notify;
         }
         if let Ok(enabled) = file.boolean(GROUP, "discord-activity") {
             settings.discord_activity = enabled;
+        }
+        if let Ok(enabled) = file.boolean(GROUP, "global-shortcuts") {
+            settings.global_shortcuts = enabled;
+        }
+        if let Ok(enabled) = file.boolean(GROUP, "listenbrainz-scrobbling") {
+            settings.listenbrainz_scrobbling = enabled;
         }
         if let Ok(enabled) = file.boolean(GROUP, "lyrics-enabled") {
             settings.lyrics_enabled = enabled;
@@ -442,8 +463,15 @@ impl Settings {
 
         let file = KeyFile::new();
         file.set_string(GROUP, "theme", self.theme.as_str());
+        file.set_string(GROUP, "language", self.language.as_str());
         file.set_boolean(GROUP, "notify-track-change", self.notify_track_change);
         file.set_boolean(GROUP, "discord-activity", self.discord_activity);
+        file.set_boolean(GROUP, "global-shortcuts", self.global_shortcuts);
+        file.set_boolean(
+            GROUP,
+            "listenbrainz-scrobbling",
+            self.listenbrainz_scrobbling,
+        );
         file.set_boolean(GROUP, "lyrics-enabled", self.lyrics_enabled);
         file.set_boolean(GROUP, "lyrics-ovh-enabled", self.lyrics_ovh_enabled);
         file.set_string(GROUP, "section", self.section.as_str());
@@ -603,6 +631,14 @@ mod tests {
     }
 
     #[test]
+    fn portal_and_scrobbling_integrations_are_explicit_opt_ins() {
+        let defaults = Settings::default();
+        assert!(!defaults.global_shortcuts);
+        assert!(!defaults.listenbrainz_scrobbling);
+        assert_eq!(defaults.language, crate::i18n::Language::System);
+    }
+
+    #[test]
     fn jambun_is_the_default_companion() {
         assert_eq!(Settings::default().companion, Companion::JamBun);
         assert_eq!(Settings::default().launcher_icon, Companion::JamBun);
@@ -669,6 +705,9 @@ mod tests {
              lyrics-font-scale=90\n\
              notify-track-change=true\n\
              discord-activity=true\n\
+             global-shortcuts=true\n\
+             listenbrainz-scrobbling=true\n\
+             language=de\n\
              lyrics-enabled=true\n\
              lyrics-ovh-enabled=true\n",
         );
@@ -690,6 +729,9 @@ mod tests {
         assert_eq!(stored.lyrics_font_scale, 90);
         assert!(stored.notify_track_change);
         assert!(stored.discord_activity);
+        assert!(stored.global_shortcuts);
+        assert!(stored.listenbrainz_scrobbling);
+        assert_eq!(stored.language, crate::i18n::Language::German);
         assert!(stored.lyrics_enabled);
         assert!(stored.lyrics_ovh_enabled);
     }

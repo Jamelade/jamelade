@@ -117,6 +117,37 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
     let lyrics = button("format-justify-left-symbolic", ["flat", "circular"]);
     lyrics.set_tooltip_text(Some("Lyrics"));
     let favorite = button("starred-symbolic", ["flat", "circular"]);
+    let credits = button("avatar-default-symbolic", ["flat", "circular"]);
+    credits.set_tooltip_text(Some("Song credits"));
+    let sleep_timer = gtk::MenuButton::builder()
+        .icon_name("alarm-symbolic")
+        .tooltip_text("Sleep timer")
+        .css_classes(["flat", "circular"])
+        .build();
+    let sleep_box = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(2)
+        .margin_top(6)
+        .margin_bottom(6)
+        .margin_start(6)
+        .margin_end(6)
+        .build();
+    let sleep_popover = gtk::Popover::builder().child(&sleep_box).build();
+    for choice in crate::sleep_timer::Choice::MENU {
+        let choice_button = gtk::Button::builder()
+            .label(choice.label())
+            .halign(gtk::Align::Fill)
+            .css_classes(["flat"])
+            .build();
+        let sender = sender.clone();
+        let popover = sleep_popover.clone();
+        choice_button.connect_clicked(move |_| {
+            sender.input(PlayerViewInput::SetSleepTimer(choice));
+            popover.popdown();
+        });
+        sleep_box.append(&choice_button);
+    }
+    sleep_timer.set_popover(Some(&sleep_popover));
 
     // **Volume lives here now.** The bar drops its own below the narrow
     // breakpoint, and shuffle and repeat were already down here to fall back
@@ -167,6 +198,10 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
         let sender = sender.clone();
         favorite.connect_clicked(move |_| sender.input(PlayerViewInput::ToggleFavorite));
     }
+    {
+        let sender = sender.clone();
+        credits.connect_clicked(move |_| sender.input(PlayerViewInput::ShowCredits));
+    }
 
     for (widget, msg) in [
         (&previous, PlayerViewInput::Previous),
@@ -205,6 +240,8 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
     queue_row.attach(&lyrics, 3, 0, 1, 1);
     queue_row.attach(&copy_link, 4, 0, 1, 1);
     queue_row.attach(&volume, 5, 0, 1, 1);
+    queue_row.attach(&sleep_timer, 6, 0, 1, 1);
+    queue_row.attach(&credits, 7, 0, 1, 1);
     into.append(&queue_row);
 
     Bits {
@@ -222,6 +259,8 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
         segment_loop,
         copy_link,
         favorite,
+        sleep_timer,
+        credits,
         shown_loop: std::cell::Cell::new(LoopMarks::Off),
     }
 }
@@ -242,6 +281,8 @@ pub(super) struct Bits {
     segment_loop: gtk::Button,
     copy_link: gtk::Button,
     favorite: gtk::Button,
+    sleep_timer: gtk::MenuButton,
+    credits: gtk::Button,
     shown_loop: std::cell::Cell<LoopMarks>,
 }
 
@@ -285,6 +326,8 @@ impl PlayerView {
         bits.segment_loop.set_sensitive(self.snap.duration_ms > 0);
         bits.copy_link.set_sensitive(self.snap.catalog_id.is_some());
         bits.favorite.set_sensitive(self.snap.catalog_id.is_some());
+        bits.sleep_timer.set_sensitive(self.snap.active);
+        bits.credits.set_sensitive(self.snap.catalog_id.is_some());
         bits.favorite.set_opacity(mode_opacity(self.snap.favorite));
         bits.favorite.set_tooltip_text(Some(if self.snap.favorite {
             "Remove favourite"
@@ -354,6 +397,18 @@ impl PlayerView {
                 }
             }
         }
+    }
+
+    pub(super) fn refresh_sleep_timer(&self, active: bool) {
+        let Some(bits) = self.bits.as_ref() else {
+            return;
+        };
+        bits.sleep_timer.set_opacity(mode_opacity(active));
+        bits.sleep_timer.set_tooltip_text(Some(if active {
+            "Sleep timer is active"
+        } else {
+            "Sleep timer"
+        }));
     }
 }
 

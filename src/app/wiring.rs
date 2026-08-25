@@ -78,7 +78,7 @@ fn sidebar_rows(model: &mut AppModel, widgets: &Widgets, sender: &ComponentSende
         let (icon, text) = match &entry {
             SidebarRow::Section(view) => {
                 let row = section_row(*view);
-                (row.icon, row.label.to_owned())
+                (row.icon, crate::i18n::tr(row.label).to_owned())
             }
             // A pin with no name is a pin whose playlist the library has not
             // produced — either still loading, or gone. The id is never shown:
@@ -90,7 +90,10 @@ fn sidebar_rows(model: &mut AppModel, widgets: &Widgets, sender: &ComponentSende
                     .unwrap_or(super::pins::UNAVAILABLE)
                     .to_owned(),
             ),
-            SidebarRow::PinButton => ("list-add-symbolic", "Pin a playlist".to_owned()),
+            SidebarRow::PinButton => (
+                "list-add-symbolic",
+                crate::i18n::tr("Pin a playlist").to_owned(),
+            ),
         };
 
         content.append(&gtk::Image::from_icon_name(super::icon(icon)));
@@ -232,12 +235,12 @@ fn section_row(view: View) -> &'static super::view::Row {
 /// that row is a pin, which is why Playlists is the last group.
 fn sidebar_headers(widgets: &Widgets, songs_row: i32, playlists_row: i32) {
     widgets.nav_list.set_header_func(move |row, _before| {
-        let title = match row.index() {
+        let title = crate::i18n::tr(match row.index() {
             0 => "Discover",
             index if index == songs_row => "Library",
             index if index == playlists_row => "Playlists",
             _ => return,
-        };
+        });
         let label = gtk::Label::new(Some(title));
         label.set_xalign(0.0);
         label.set_margin_start(16);

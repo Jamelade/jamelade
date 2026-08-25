@@ -121,6 +121,7 @@ pub struct DetailActions {
     pub play: Box<dyn Fn()>,
     pub shuffle: Box<dyn Fn()>,
     pub copy_link: Box<dyn Fn()>,
+    pub export_playlist: Box<dyn Fn(crate::playlist_export::Format)>,
     pub album_artist: Box<dyn Fn()>,
     pub request_art: ArtRequest,
     pub artist_activate: Box<dyn Fn(ArtistActivate)>,
@@ -153,6 +154,8 @@ pub struct DetailPage {
     meta: gtk::Label,
     actions: gtk::Box,
     copy_link: gtk::Button,
+    export_playlist: gtk::MenuButton,
+    export_title: Option<String>,
     share_link: Option<String>,
     error: adw::StatusPage,
     empty: adw::StatusPage,
@@ -170,6 +173,7 @@ impl DetailPage {
             play: on_play,
             shuffle: on_shuffle,
             copy_link: on_copy_link,
+            export_playlist: on_export_playlist,
             album_artist: on_album_artist,
             request_art,
             artist_activate: on_artist_activate,
@@ -236,6 +240,39 @@ impl DetailPage {
             .build();
         copy_link.connect_clicked(move |_| on_copy_link());
 
+        let export_playlist = gtk::MenuButton::builder()
+            .icon_name("document-save-symbolic")
+            .tooltip_text("Export playlist")
+            .css_classes(["pill"])
+            .visible(false)
+            .build();
+        let export_box = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(2)
+            .margin_top(6)
+            .margin_bottom(6)
+            .margin_start(6)
+            .margin_end(6)
+            .build();
+        let export_popover = gtk::Popover::builder().child(&export_box).build();
+        let on_export_playlist: std::rc::Rc<dyn Fn(crate::playlist_export::Format)> =
+            std::rc::Rc::from(on_export_playlist);
+        for format in crate::playlist_export::Format::ALL {
+            let button = gtk::Button::builder()
+                .label(format.label())
+                .css_classes(["flat"])
+                .halign(gtk::Align::Fill)
+                .build();
+            let action = on_export_playlist.clone();
+            let popover = export_popover.clone();
+            button.connect_clicked(move |_| {
+                action(format);
+                popover.popdown();
+            });
+            export_box.append(&button);
+        }
+        export_playlist.set_popover(Some(&export_popover));
+
         // One box so both appear and disappear together — a Shuffle button
         // beside nothing is as useless as a Play button beside nothing.
         let actions = gtk::Box::builder()
@@ -246,6 +283,7 @@ impl DetailPage {
         actions.append(&play);
         actions.append(&shuffle);
         actions.append(&copy_link);
+        actions.append(&export_playlist);
 
         let banner = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -354,6 +392,8 @@ impl DetailPage {
             meta,
             actions,
             copy_link,
+            export_playlist,
+            export_title: None,
             share_link: None,
             error,
             empty,
@@ -389,6 +429,8 @@ impl DetailPage {
 
     /// Fill an album page: cover, artist, year, and its tracks.
     pub fn show_album(&mut self, album: &Album, tracks: Vec<Entry>) {
+        self.export_title = None;
+        self.export_playlist.set_visible(false);
         self.set_share_link(album.share_url.clone());
         self.cover.square("media-optical-symbolic");
         self.head(&album.name, &album.artist, album.artwork.as_ref());
@@ -432,6 +474,8 @@ impl DetailPage {
 
     /// Fill a playlist page: cover, curator or blurb, and its tracks.
     pub fn show_playlist(&mut self, playlist: &Playlist, tracks: Vec<Entry>) {
+        self.export_title = Some(playlist.name.clone());
+        self.export_playlist.set_visible(true);
         self.set_share_link(playlist.share_url.clone());
         self.cover.square("view-list-symbolic");
         self.album_artist.set_visible(false);
@@ -467,6 +511,8 @@ impl DetailPage {
         latest_release: Option<Album>,
         albums: Vec<Album>,
     ) {
+        self.export_title = None;
+        self.export_playlist.set_visible(false);
         self.set_share_link(None);
         adw::prelude::NavigationPageExt::set_title(&self.page, &artist.name);
         self.entries.clear();
@@ -532,6 +578,21 @@ impl DetailPage {
 
     pub fn share_link(&self) -> Option<&str> {
         self.share_link.as_deref()
+    }
+
+    /// Public metadata for an explicit local export. Library resource IDs are
+    /// intentionally not returned.
+    pub fn export_data(&self) -> Option<(String, Vec<crate::music::types::Track>)> {
+        let title = self.export_title.clone()?;
+        let tracks = self
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::Song(track) => Some(track.clone()),
+                _ => None,
+            })
+            .collect();
+        Some((title, tracks))
     }
 
     /// Show the cover, once it has been fetched to disk.

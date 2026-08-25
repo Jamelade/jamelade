@@ -52,6 +52,9 @@ flatpak info --show-permissions io.github.Jamelade.Jamelade
 - Discord activity goes through a same-user local socket only after opt-in. It
   includes song, artist, album, and selected Jamkin—not lyrics, Apple
   credentials, playlist names, or artwork URLs.
+- `api.listenbrainz.org` receives title, artist, album, duration, and listen
+  time only after scrobbling is enabled. Its bearer token is never sent to any
+  other destination.
 
 Opening project links is an explicit user action in the default browser.
 
@@ -85,6 +88,8 @@ AppImage follows the normal XDG config and cache roots instead.
 | Settings and queue | Bounded user-only files |
 | Library metadata and artwork | App-private bounded caches; artwork filenames do not contain titles |
 | Lyrics | Bounded process-memory cache only |
+| Lyric offsets | Numeric Apple catalogue ID and bounded timing offset only |
+| ListenBrainz token | Encrypted with a per-app desktop-keyring portal key in a private bounded file |
 | Widevine | Chromium component files in the private app directory; absent from source and packages |
 
 Explicit sign-out stops vault writes, clears cookies/web storage and

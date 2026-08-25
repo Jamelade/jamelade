@@ -65,6 +65,15 @@ playback, Chromium, and Widevine.
 - `src/lyrics.rs` parses Apple TTML as bounded streaming XML and uses a separate
   credential-free HTTP client for independently opted-in fallbacks. Successful
   lyrics remain in memory.
+- `src/lyric_timing.rs` stores only numeric catalogue IDs and bounded offsets;
+  it never writes lyric text or listening metadata.
+- `src/scrobble.rs` is off by default, encrypts its token with the desktop
+  Secret portal, and can submit only bounded visible metadata to one fixed
+  ListenBrainz HTTPS endpoint.
+- `src/app/global_shortcuts.rs` uses the XDG portal and receives only four fixed
+  action IDs. It never observes or stores the user's key combinations.
+- Playlist writes expose only Apple's documented create and append operations.
+  Export files contain visible metadata and public links, not library IDs.
 - `src/discord.rs` is off by default and talks only to a validated same-user
   local Discord socket.
 - `src/apple_link.rs` accepts only bounded HTTPS URLs on `music.apple.com`.

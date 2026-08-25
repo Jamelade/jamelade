@@ -268,6 +268,9 @@ pub enum PlayerViewInput {
     CopyLink,
     ShowLyrics,
     ToggleFavorite,
+    SetSleepTimer(crate::sleep_timer::Choice),
+    SleepTimerActive(bool),
+    ShowCredits,
     VolumeChanged(f64),
     /// How tall the drawer is about to be. See [`fill_window`].
     RoomFor(i32),
@@ -885,6 +888,13 @@ impl SimpleComponent for PlayerView {
             }
             PlayerViewInput::ToggleFavorite => {
                 let _ = sender.output(NowPlayingOutput::ToggleFavorite);
+            }
+            PlayerViewInput::SetSleepTimer(choice) => {
+                let _ = sender.output(NowPlayingOutput::SetSleepTimer(choice));
+            }
+            PlayerViewInput::SleepTimerActive(active) => self.refresh_sleep_timer(active),
+            PlayerViewInput::ShowCredits => {
+                let _ = sender.output(NowPlayingOutput::ShowCredits);
             }
             PlayerViewInput::VolumeChanged(v) => {
                 // Same shape as the bar's. `refresh` blocks this handler while

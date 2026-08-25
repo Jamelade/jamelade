@@ -15,6 +15,11 @@ written as listening history.
 | LRCLIB | Off | Title, artist, album, duration, and IP address |
 | Lyrics.ovh | Off | Artist, title, and IP address; the service may query downstream lyric sites |
 
+Apple-provided translations and romanizations appear as selectable variants
+when present in the same bounded first-party response. Jamelade does not call a
+translation service. A manual timing correction is stored locally as a numeric
+catalogue ID and offset; lyric text, title, and artist are not written.
+
 Each third-party source requires its own consent. Its HTTP client has no Apple
 header, cookie, token, account ID, or redirect permission. Apple JSON is capped
 at 2 MiB; third-party JSON is capped at 256 KiB and requires a JSON content

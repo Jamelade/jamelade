@@ -68,6 +68,9 @@ const MAX_EVENT_LINE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_DIAGNOSTIC_LINE_BYTES: usize = 16 * 1024;
 const MAX_BROKER_PENDING: usize = 64;
 const MAX_BROKER_PATH_BYTES: usize = 4 * 1024;
+const MAX_PLAYLIST_NAME_BYTES: usize = 512;
+const MAX_PLAYLIST_DESCRIPTION_BYTES: usize = 4 * 1024;
+const MAX_PLAYLIST_TRACKS: usize = 1_000;
 const BROKER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(35);
 
 type PendingBroker = std::collections::HashMap<u64, oneshot::Sender<ApiReply>>;
@@ -133,6 +136,63 @@ impl Broker {
             return Err(BrokerError::InvalidRequest);
         }
 
+        self.request_command(move |request_id| Command::ApiRequest {
+            request_id,
+            method,
+            path,
+        })
+        .await
+    }
+
+    pub async fn create_playlist(
+        &self,
+        name: String,
+        description: String,
+        songs: Vec<String>,
+    ) -> Result<ApiReply, BrokerError> {
+        if name.trim().is_empty()
+            || name.len() > MAX_PLAYLIST_NAME_BYTES
+            || description.len() > MAX_PLAYLIST_DESCRIPTION_BYTES
+            || songs.len() > MAX_PLAYLIST_TRACKS
+            || name.chars().any(char::is_control)
+            || description.chars().any(|ch| matches!(ch, '\0' | '\r'))
+            || !songs.iter().all(|id| valid_catalog_id(id))
+        {
+            return Err(BrokerError::InvalidRequest);
+        }
+        self.request_command(move |request_id| Command::CreatePlaylist {
+            request_id,
+            name,
+            description,
+            songs,
+        })
+        .await
+    }
+
+    pub async fn add_playlist_tracks(
+        &self,
+        playlist_id: String,
+        songs: Vec<String>,
+    ) -> Result<ApiReply, BrokerError> {
+        if !valid_resource_id(&playlist_id)
+            || songs.is_empty()
+            || songs.len() > MAX_PLAYLIST_TRACKS
+            || !songs.iter().all(|id| valid_catalog_id(id))
+        {
+            return Err(BrokerError::InvalidRequest);
+        }
+        self.request_command(move |request_id| Command::AddPlaylistTracks {
+            request_id,
+            playlist_id,
+            songs,
+        })
+        .await
+    }
+
+    async fn request_command(
+        &self,
+        make: impl FnOnce(u64) -> Command,
+    ) -> Result<ApiReply, BrokerError> {
         let request_id = self
             .next_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -149,11 +209,7 @@ impl Broker {
             pending.insert(request_id, tx);
         }
 
-        let command = Command::ApiRequest {
-            request_id,
-            method,
-            path,
-        };
+        let command = make(request_id);
         if self.tx.try_send(command).is_err() {
             self.pending.lock().await.remove(&request_id);
             return Err(BrokerError::Unavailable);
@@ -168,6 +224,18 @@ impl Broker {
             }
         }
     }
+}
+
+fn valid_catalog_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 32 && id.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn valid_resource_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 512
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 #[derive(Debug, PartialEq, Eq)]

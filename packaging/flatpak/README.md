@@ -31,7 +31,8 @@ must remain Electron's direct parent; `electron-shim` provides that boundary.
 The app requires network, display, audio, DRI, keyring, MPRIS, launcher, and
 narrow optional Discord-socket permissions. It has no home-directory grant.
 `gtk4-layer-shell` powers only the optional Desktop Jamkin overlay and adds no
-permission.
+permission. Global shortcuts and the per-app key used for an optional encrypted
+ListenBrainz token use desktop portals and need no additional broad grant.
 
 Widevine is not bundled. Chromium's component updater fetches it into the
 app-private profile on the user's machine. Do not add a CDM or SF Pro font to

@@ -129,6 +129,10 @@ pub struct LyricsView {
     error: adw::StatusPage,
     no_lyrics: adw::StatusPage,
     source: gtk::Label,
+    variant_picker: gtk::DropDown,
+    changing_variant: Rc<Cell<bool>>,
+    timing_row: gtk::Box,
+    timing_label: gtk::Label,
     companion_stage: gtk::Box,
     companion_actor: JamkinActor,
     companion_name: gtk::Label,
@@ -137,6 +141,7 @@ pub struct LyricsView {
     line_animations: RefCell<Vec<adw::TimedAnimation>>,
     scroll_animation: RefCell<Option<adw::TimedAnimation>>,
     seek: Rc<dyn Fn(u64)>,
+    offset_ms: Rc<Cell<i32>>,
 }
 
 impl LyricsView {
@@ -146,6 +151,8 @@ impl LyricsView {
         reduced_motion: bool,
         enable: impl Fn() + 'static,
         seek: impl Fn(u64) + 'static,
+        adjust_timing: impl Fn(i32) + 'static,
+        select_variant: impl Fn(usize) + 'static,
     ) -> Self {
         let disabled = adw::StatusPage::builder()
             .icon_name("format-justify-left-symbolic")
@@ -164,17 +171,17 @@ impl LyricsView {
 
         let waiting = adw::StatusPage::builder()
             .icon_name("format-justify-left-symbolic")
-            .title("Nothing playing")
+            .title(crate::i18n::tr("Nothing playing"))
             .description("Start a song, then its lyrics will appear here.")
             .build();
         let no_lyrics = adw::StatusPage::builder()
             .icon_name("format-justify-left-symbolic")
-            .title("No lyrics found")
+            .title(crate::i18n::tr("No lyrics found"))
             .description("None of the enabled sources has a match for this recording.")
             .build();
         let instrumental = adw::StatusPage::builder()
             .icon_name("audio-x-generic-symbolic")
-            .title("Instrumental")
+            .title(crate::i18n::tr("Instrumental"))
             .description("This recording has no sung lyrics.")
             .build();
         let error = adw::StatusPage::builder()
@@ -184,7 +191,7 @@ impl LyricsView {
             .build();
 
         let loading_title = gtk::Label::builder()
-            .label("Finding lyrics")
+            .label(crate::i18n::tr("Finding lyrics"))
             .css_classes(["title-2"])
             .wrap(true)
             .justify(gtk::Justification::Center)
@@ -208,6 +215,58 @@ impl LyricsView {
             .xalign(0.0)
             .css_classes(["caption", "dim-label"])
             .build();
+        let timing_label = gtk::Label::builder()
+            .label("Timing ±0.00 s")
+            .css_classes(["caption", "dim-label"])
+            .tooltip_text("Saved only as this song's numeric Apple catalog ID and timing offset")
+            .build();
+        let variant_picker = gtk::DropDown::builder()
+            .halign(gtk::Align::Start)
+            .tooltip_text("Choose an Apple-provided lyric version")
+            .visible(false)
+            .build();
+        let changing_variant = Rc::new(Cell::new(false));
+        {
+            let changing = changing_variant.clone();
+            variant_picker.connect_selected_notify(move |picker| {
+                if !changing.get() && picker.selected() != gtk::INVALID_LIST_POSITION {
+                    select_variant(picker.selected() as usize);
+                }
+            });
+        }
+        let timing_row = gtk::Box::builder()
+            .spacing(2)
+            .halign(gtk::Align::Start)
+            .visible(false)
+            .build();
+        let earlier = gtk::Button::builder()
+            .icon_name("go-previous-symbolic")
+            .tooltip_text("Show lyrics 0.25 seconds earlier")
+            .css_classes(["flat", "circular"])
+            .build();
+        let reset = gtk::Button::builder()
+            .child(&timing_label)
+            .tooltip_text("Reset lyric timing")
+            .css_classes(["flat", "pill"])
+            .build();
+        let later = gtk::Button::builder()
+            .icon_name("go-next-symbolic")
+            .tooltip_text("Show lyrics 0.25 seconds later")
+            .css_classes(["flat", "circular"])
+            .build();
+        let adjust_timing: Rc<dyn Fn(i32)> = Rc::new(adjust_timing);
+        {
+            let adjust = adjust_timing.clone();
+            earlier.connect_clicked(move |_| adjust(-crate::lyric_timing::STEP_MS));
+        }
+        {
+            let adjust = adjust_timing.clone();
+            later.connect_clicked(move |_| adjust(crate::lyric_timing::STEP_MS));
+        }
+        reset.connect_clicked(move |_| adjust_timing(0));
+        timing_row.append(&earlier);
+        timing_row.append(&reset);
+        timing_row.append(&later);
         let companion_actor = JamkinActor::new(companion, 142, quality);
         companion_actor.set_reduced_motion(reduced_motion);
         let companion_name = gtk::Label::builder()
@@ -223,6 +282,8 @@ impl LyricsView {
             .build();
         companion_copy.append(&companion_name);
         companion_copy.append(&source);
+        companion_copy.append(&variant_picker);
+        companion_copy.append(&timing_row);
 
         // This stage lives outside the lyrics scroller. It is deliberately a
         // plain layout rather than a card: transparent companion art can read
@@ -304,6 +365,10 @@ impl LyricsView {
             error,
             no_lyrics,
             source,
+            variant_picker,
+            changing_variant,
+            timing_row,
+            timing_label,
             companion_stage,
             companion_actor,
             companion_name,
@@ -312,6 +377,7 @@ impl LyricsView {
             line_animations: RefCell::new(Vec::new()),
             scroll_animation: RefCell::new(None),
             seek: Rc::new(seek),
+            offset_ms: Rc::new(Cell::new(0)),
         };
         view.set_companion(companion);
         view.set_jamkin_state(JamkinState::Private);
@@ -355,6 +421,28 @@ impl LyricsView {
     }
 
     pub fn show(&self, lyrics: &Lyrics) {
+        let labels = lyrics.variant_labels();
+        let names: Vec<&str> = labels.iter().map(String::as_str).collect();
+        self.changing_variant.set(true);
+        self.variant_picker
+            .set_model(Some(&gtk::StringList::new(&names)));
+        self.variant_picker.set_selected(0);
+        self.changing_variant.set(false);
+        self.variant_picker.set_visible(!lyrics.variants.is_empty());
+        self.render(lyrics);
+    }
+
+    pub fn show_variant(&self, lyrics: &Lyrics, index: usize) {
+        if index > lyrics.variants.len() {
+            return;
+        }
+        self.changing_variant.set(true);
+        self.variant_picker.set_selected(index as u32);
+        self.changing_variant.set(false);
+        self.render(&lyrics.selected(index));
+    }
+
+    fn render(&self, lyrics: &Lyrics) {
         self.clear_lines();
         if lyrics.instrumental {
             self.neutral_source(&format!(
@@ -388,12 +476,14 @@ impl LyricsView {
                 .set_tooltip_text(Some(&format!("Line-synchronized lyrics from {provider}")));
             self.source.remove_css_class("dim-label");
             self.source.add_css_class("lyrics-live-source");
+            self.timing_row.set_visible(true);
         } else {
             self.source.set_label("UNSYNCED");
             self.source
                 .set_tooltip_text(Some(&format!("Plain lyrics from {provider}")));
             self.source.remove_css_class("lyrics-live-source");
             self.source.add_css_class("dim-label");
+            self.timing_row.set_visible(false);
         }
         self.set_jamkin_state(JamkinState::Singing);
         let mut timed = self.timed.borrow_mut();
@@ -425,7 +515,10 @@ impl LyricsView {
                     .css_classes(["flat", "lyrics-line-button"])
                     .build();
                 let seek = self.seek.clone();
-                button.connect_clicked(move |_| seek(at_ms));
+                let offset = self.offset_ms.clone();
+                button.connect_clicked(move |_| {
+                    seek(crate::lyric_timing::playback_clock(at_ms, offset.get()))
+                });
                 self.lyrics_lines.append(&button);
                 timed.push((at_ms, label));
             } else {
@@ -462,6 +555,8 @@ impl LyricsView {
 
     fn neutral_source(&self, label: &str) {
         self.source.set_label(label);
+        self.variant_picker.set_visible(false);
+        self.timing_row.set_visible(false);
         self.source.set_tooltip_text(None);
         self.source.remove_css_class("lyrics-live-source");
         self.source.add_css_class("dim-label");
@@ -475,6 +570,7 @@ impl LyricsView {
     }
 
     pub fn sync_position(&self, position_ms: u64) {
+        let position_ms = crate::lyric_timing::lyric_clock(position_ms, self.offset_ms.get());
         let timed = self.timed.borrow();
         if timed.is_empty() || self.pages.visible_child_name().as_deref() != Some("lyrics") {
             return;
@@ -579,6 +675,17 @@ impl LyricsView {
             self.lyrics_lines.remove(&line);
         }
         self.timed.borrow_mut().clear();
+        self.current.set(None);
+    }
+
+    /// Apply the current recording's local correction without refetching or
+    /// rewriting lyric text. Zero is the provider's original timing.
+    pub fn set_timing_offset(&self, offset_ms: i32) {
+        self.offset_ms.set(offset_ms);
+        self.timing_label
+            .set_label(&format!("Timing {:+.2} s", f64::from(offset_ms) / 1_000.0));
+        // Force the next clock tick to repaint even when it remains within the
+        // same provider line after a small adjustment.
         self.current.set(None);
     }
 }

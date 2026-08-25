@@ -167,7 +167,7 @@ impl View {
     /// entry — and where the sidebar has already collapsed to an overlay, so
     /// the selected row that normally answers "where am I" is off screen.
     pub(super) fn title(self) -> &'static str {
-        match self {
+        crate::i18n::tr(match self {
             Self::Explore => "Explore",
             Self::Search => "Apple Music",
             Self::Lyrics => "Lyrics",
@@ -175,7 +175,7 @@ impl View {
             Self::Albums => "Albums",
             Self::Artists => "Artists",
             Self::Playlists => "Playlists",
-        }
+        })
     }
 }
 
@@ -247,13 +247,13 @@ impl CatalogFilter {
     ];
 
     pub(super) fn label(self) -> &'static str {
-        match self {
+        crate::i18n::tr(match self {
             Self::All => "Everything",
             Self::Songs => "Songs",
             Self::Albums => "Albums",
             Self::Artists => "Artists",
             Self::Playlists => "Playlists",
-        }
+        })
     }
 
     /// The action target. Not persisted — a filter is what you want of *this*
@@ -347,14 +347,14 @@ impl SortBy {
     }
 
     pub(super) fn label(self) -> &'static str {
-        match self {
+        crate::i18n::tr(match self {
             Self::Title => "Title",
             Self::Artist => "Artist",
             Self::Album => "Album",
             Self::Year => "Year",
             Self::Added => "Recently Added",
             Self::Updated => "Recently Updated",
-        }
+        })
     }
 
     /// The action target, and what lands in the ini file.

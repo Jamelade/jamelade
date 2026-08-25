@@ -42,6 +42,13 @@ Apple applies its own privacy policy and service terms to this traffic.
   Discord-compatible client the current title, artist, album, selected Jamkin,
   and playback timing. Discord then applies the user's activity and audience
   settings. No Discord token or client secret is used.
+- **ListenBrainz scrobbling:** off by default. When enabled, Jamelade sends the
+  title, artist, album, duration, listen time, and requester's IP address to
+  `api.listenbrainz.org`. It sends no Apple identifier, credential, artwork,
+  lyric, or playlist name. The token is encrypted locally with a per-app key
+  supplied by the desktop keyring portal.
+- **Global shortcuts:** off by default and local only. The desktop portal owns
+  the chosen bindings; Jamelade receives only one of four fixed action names.
 - **Desktop Jamkin, themes, and collages:** local only. They reuse already
   loaded playback state and cached artwork.
 - **Launcher-icon helper:** optional and installed separately for the current
@@ -56,7 +63,9 @@ in-memory lyric cache when lyric consent changes.
 
 Jamelade stores preferences, bounded artwork and playlist caches, the encrypted
 Apple-cookie vault, and Chromium's downloaded Widevine component in its own XDG
-directories. It requests no broad home-directory access in the Flatpak. The
+directories. Per-song lyric timing stores only numeric catalogue IDs and
+offsets. Playlist export writes a user-chosen file containing visible metadata
+and public links. It requests no broad home-directory access in the Flatpak. The
 AppImage is a native executable and therefore inherits the invoking user's
 normal filesystem permissions, although Jamelade's code continues to use only
 its documented XDG locations. Sign out removes Jamelade's saved Apple session.

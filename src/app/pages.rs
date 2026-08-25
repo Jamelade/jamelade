@@ -99,6 +99,7 @@ impl AppModel {
         let play = sender.clone();
         let shuffle = sender.clone();
         let copy_link = sender.clone();
+        let export_playlist = sender.clone();
         let album_artist = sender.clone();
         let artist_activate = sender.clone();
         let sidebar = sender.clone();
@@ -127,6 +128,9 @@ impl AppModel {
                     })
                 }),
                 copy_link: Box::new(move || copy_link.input(AppMsg::CopyPageLink { page: id })),
+                export_playlist: Box::new(move |format| {
+                    export_playlist.input(AppMsg::ExportPlaylist { page: id, format })
+                }),
                 album_artist: Box::new(move || {
                     album_artist.input(AppMsg::OpenAlbumArtist { page: id })
                 }),

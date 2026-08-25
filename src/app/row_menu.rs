@@ -39,6 +39,7 @@ impl AppModel {
         // Library" for a track read *out of* the library, or "Favourite" for
         // one already starred, is a menu that lies about the state of things.
         let account = gtk::gio::Menu::new();
+        account.append(Some("Add to _Playlist…"), Some("row.add-to-playlist"));
         if req.in_library {
             // Only when we hold the library id — the catalog id will not do,
             // and offering a removal we cannot perform is worse than not
@@ -128,6 +129,18 @@ impl AppModel {
                 sender.input(AppMsg::LibraryWrite {
                     catalog_id: id.clone(),
                     action: what,
+                });
+            });
+            actions.add_action(&action);
+        }
+
+        {
+            let action = gtk::gio::SimpleAction::new("add-to-playlist", None);
+            let catalog_id = req.catalog_id.clone();
+            let sender = self.menu_sender.clone();
+            action.connect_activate(move |_, _| {
+                sender.input(AppMsg::ShowAddToPlaylist {
+                    catalog_id: catalog_id.clone(),
                 });
             });
             actions.add_action(&action);

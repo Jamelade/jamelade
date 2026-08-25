@@ -38,6 +38,12 @@ pub struct SearchResults {
     pub playlists: Vec<Playlist>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SongCredit {
+    pub role: String,
+    pub names: Vec<String>,
+}
+
 /// A playlist long enough to hit this is a playlist nobody scrolls. Bounded so
 /// one enormous one cannot spin through fifty requests.
 const PLAYLIST_MAX: usize = 1_000;
@@ -139,16 +145,6 @@ pub enum ApiError {
     NotFound,
     #[error("Apple Music error ({0})")]
     Other(StatusCode),
-}
-
-#[derive(Debug, Deserialize)]
-struct LyricsResource {
-    attributes: Option<LyricsAttributes>,
-}
-
-#[derive(Debug, Deserialize)]
-struct LyricsAttributes {
-    ttml: String,
 }
 
 impl Client {
@@ -256,19 +252,36 @@ impl Client {
         if !res.status().is_success() {
             return Err(self.explain(res).await);
         }
-        let parsed: Response<LyricsResource> =
+        let parsed: serde_json::Value =
             bounded_json_with_limit(res, "Apple Music lyrics", LYRICS_BODY_MAX).await?;
-        let Some(ttml) = parsed
-            .data
-            .into_iter()
-            .next()
-            .and_then(|resource| resource.attributes)
-            .map(|attributes| attributes.ttml)
-            .filter(|ttml| !ttml.trim().is_empty())
-        else {
-            return Ok(None);
-        };
-        crate::lyrics::lyrics_from_apple_ttml(&ttml).map(Some)
+        apple_lyrics_from_value(&parsed)
+    }
+
+    /// Apple's catalog credits view for the current recording. Remote strings
+    /// are flattened into bounded plain text; the UI never renders Apple HTML
+    /// or exposes the raw response.
+    pub async fn song_credits(&self, catalog_id: &str) -> Result<Vec<SongCredit>> {
+        if catalog_id.is_empty()
+            || catalog_id.len() > 32
+            || !catalog_id.bytes().all(|byte| byte.is_ascii_digit())
+        {
+            anyhow::bail!("invalid Apple Music catalog id");
+        }
+        let res = self
+            .get(&format!(
+                "/catalog/{}/songs/{catalog_id}/view/credits",
+                self.storefront
+            ))
+            .await
+            .context("requesting song credits")?;
+        if res.status() == StatusCode::NOT_FOUND {
+            return Ok(Vec::new());
+        }
+        if !res.status().is_success() {
+            return Err(self.explain(res).await);
+        }
+        let value: serde_json::Value = bounded_json(res, "song credits").await?;
+        Ok(parse_song_credits(&value))
     }
 
     /// The user's whole saved-songs library.
@@ -368,6 +381,48 @@ impl Client {
         let id = urlencode(id);
         self.accepted(format!("/me/favorites?ids[songs]={id}"), "favouriting")
             .await
+    }
+
+    /// Create a user playlist through Apple's documented Music Library write.
+    /// The browser broker accepts only this typed payload and never exposes its
+    /// authentication material to Rust.
+    pub async fn create_playlist(
+        &self,
+        name: String,
+        description: String,
+        songs: Vec<String>,
+    ) -> Result<()> {
+        let ApiReply { status, body } = self
+            .broker
+            .create_playlist(name, description, songs)
+            .await
+            .map_err(Self::transport_error)?;
+        let response = BrowserResponse {
+            status: StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
+            body,
+        };
+        if !response.status().is_success() {
+            return Err(self.explain(response).await);
+        }
+        Ok(())
+    }
+
+    /// Append catalog songs to a library playlist. Apple publishes no matching
+    /// remove/reorder endpoint, so this client deliberately exposes neither.
+    pub async fn add_playlist_tracks(&self, playlist_id: String, songs: Vec<String>) -> Result<()> {
+        let ApiReply { status, body } = self
+            .broker
+            .add_playlist_tracks(playlist_id, songs)
+            .await
+            .map_err(Self::transport_error)?;
+        let response = BrowserResponse {
+            status: StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
+            body,
+        };
+        if !response.status().is_success() {
+            return Err(self.explain(response).await);
+        }
+        Ok(())
     }
 
     // There is deliberately no `remove_from_favorites`.
@@ -1311,6 +1366,89 @@ impl Client {
     }
 }
 
+fn bounded_credit_text(value: &serde_json::Value) -> Option<String> {
+    value
+        .as_str()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(|text| text.chars().take(160).collect())
+}
+
+fn credit_names(resource: &serde_json::Value) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut add = |value: &serde_json::Value| {
+        if let Some(name) = bounded_credit_text(value)
+            && !names.contains(&name)
+            && names.len() < 32
+        {
+            names.push(name);
+        }
+    };
+    if let Some(attributes) = resource.get("attributes") {
+        for key in ["names", "artists", "contributors"] {
+            if let Some(values) = attributes.get(key).and_then(serde_json::Value::as_array) {
+                for value in values {
+                    if let Some(name) = value.get("name") {
+                        add(name);
+                    } else {
+                        add(value);
+                    }
+                }
+            }
+        }
+        if let Some(name) = attributes.get("name") {
+            add(name);
+        }
+    }
+    if let Some(relationships) = resource
+        .get("relationships")
+        .and_then(serde_json::Value::as_object)
+    {
+        for relationship in relationships.values() {
+            if let Some(items) = relationship
+                .get("data")
+                .and_then(serde_json::Value::as_array)
+            {
+                for item in items {
+                    if let Some(name) = item.get("attributes").and_then(|value| value.get("name")) {
+                        add(name);
+                    }
+                }
+            }
+        }
+    }
+    names
+}
+
+fn parse_song_credits(value: &serde_json::Value) -> Vec<SongCredit> {
+    let Some(resources) = value.get("data").and_then(serde_json::Value::as_array) else {
+        return Vec::new();
+    };
+    let mut groups = Vec::new();
+    for resource in resources.iter().take(64) {
+        let attributes = resource.get("attributes");
+        let role = attributes
+            .and_then(|attributes| {
+                ["title", "roleName", "name"]
+                    .into_iter()
+                    .find_map(|key| attributes.get(key).and_then(bounded_credit_text))
+                    .or_else(|| {
+                        attributes
+                            .get("roleNames")
+                            .and_then(serde_json::Value::as_array)
+                            .and_then(|roles| roles.first())
+                            .and_then(bounded_credit_text)
+                    })
+            })
+            .unwrap_or_else(|| "Credits".to_owned());
+        let names = credit_names(resource);
+        if !names.is_empty() {
+            groups.push(SongCredit { role, names });
+        }
+    }
+    groups
+}
+
 #[derive(Debug, Clone, Copy)]
 enum ExplorePart {
     Recommendations,
@@ -1551,6 +1689,155 @@ fn artist_albums_of(resource: &ArtistResource) -> Vec<Album> {
         .unwrap_or_default()
 }
 
+/// Decode the normal TTML and any first-party translation/pronunciation TTML
+/// Apple embedded beside it. The public API has changed the nesting of these
+/// optional values between clients, so alternatives are discovered only below
+/// semantically named keys rather than by accepting every remote XML string.
+fn apple_lyrics_from_value(value: &serde_json::Value) -> Result<Option<crate::lyrics::Lyrics>> {
+    let Some(ttml) = value
+        .pointer("/data/0/attributes/ttml")
+        .and_then(serde_json::Value::as_str)
+        .filter(|ttml| !ttml.trim().is_empty())
+    else {
+        return Ok(None);
+    };
+    let mut original = crate::lyrics::lyrics_from_apple_ttml(ttml)?;
+    let mut variants = Vec::new();
+    collect_apple_lyric_variants(value, None, None, &original.lines, &mut variants, 0);
+    original.variants = variants;
+    Ok(Some(original))
+}
+
+fn variant_kind(key: &str) -> Option<crate::lyrics::LyricVariantKind> {
+    let key = key.to_ascii_lowercase();
+    if key.contains("translation") {
+        Some(crate::lyrics::LyricVariantKind::Translation)
+    } else if key.contains("transliteration")
+        || key.contains("romanization")
+        || key.contains("romanisation")
+        || key.contains("pronunciation")
+    {
+        Some(crate::lyrics::LyricVariantKind::Romanization)
+    } else {
+        None
+    }
+}
+
+fn variant_label(
+    object: &serde_json::Map<String, serde_json::Value>,
+    kind: crate::lyrics::LyricVariantKind,
+) -> String {
+    let detail = ["displayName", "languageName", "language", "locale", "name"]
+        .into_iter()
+        .find_map(|key| object.get(key).and_then(serde_json::Value::as_str))
+        .map(|value| {
+            value
+                .trim()
+                .chars()
+                .filter(|ch| !ch.is_control())
+                .take(48)
+                .collect::<String>()
+        })
+        .filter(|value| !value.is_empty());
+    let base = match kind {
+        crate::lyrics::LyricVariantKind::Translation => "Translation",
+        crate::lyrics::LyricVariantKind::Romanization => "Romanized",
+    };
+    detail
+        .map(|detail| format!("{base} · {detail}"))
+        .unwrap_or_else(|| base.to_owned())
+}
+
+fn collect_apple_lyric_variants(
+    value: &serde_json::Value,
+    inherited_kind: Option<crate::lyrics::LyricVariantKind>,
+    inherited_label: Option<&str>,
+    original: &[crate::lyrics::Line],
+    out: &mut Vec<crate::lyrics::LyricVariant>,
+    depth: usize,
+) {
+    const MAX_VARIANTS: usize = 4;
+    const MAX_VARIANT_DEPTH: usize = 16;
+    if out.len() >= MAX_VARIANTS || depth > MAX_VARIANT_DEPTH {
+        return;
+    }
+    match value {
+        serde_json::Value::Object(object) => {
+            let label = inherited_kind.map(|kind| variant_label(object, kind));
+            for (key, child) in object {
+                let kind = variant_kind(key).or(inherited_kind);
+                let child_label = label.as_deref().or(inherited_label);
+                if key.eq_ignore_ascii_case("ttml")
+                    && let (Some(kind), Some(raw)) = (kind, child.as_str())
+                    && let Ok(parsed) = crate::lyrics::lyrics_from_apple_ttml(raw)
+                    && !parsed.lines.is_empty()
+                    && parsed.lines != original
+                    && !out.iter().any(|existing| existing.lines == parsed.lines)
+                {
+                    out.push(crate::lyrics::LyricVariant {
+                        kind,
+                        label: child_label
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| variant_label(object, kind)),
+                        lines: parsed.lines,
+                        synced: parsed.synced,
+                    });
+                } else {
+                    collect_apple_lyric_variants(
+                        child,
+                        kind,
+                        child_label,
+                        original,
+                        out,
+                        depth + 1,
+                    );
+                }
+                if out.len() >= MAX_VARIANTS {
+                    break;
+                }
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for child in values.iter().take(MAX_VARIANTS * 2) {
+                collect_apple_lyric_variants(
+                    child,
+                    inherited_kind,
+                    inherited_label,
+                    original,
+                    out,
+                    depth + 1,
+                );
+                if out.len() >= MAX_VARIANTS {
+                    break;
+                }
+            }
+        }
+        // A future API might put the TTML directly under `translation` rather
+        // than inside an object. Keep the same semantic-key requirement.
+        serde_json::Value::String(raw) if inherited_kind.is_some() => {
+            if let Ok(parsed) = crate::lyrics::lyrics_from_apple_ttml(raw)
+                && !parsed.lines.is_empty()
+                && parsed.lines != original
+                && !out.iter().any(|existing| existing.lines == parsed.lines)
+            {
+                let kind = inherited_kind.expect("guarded above");
+                out.push(crate::lyrics::LyricVariant {
+                    kind,
+                    label: inherited_label
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| match kind {
+                            crate::lyrics::LyricVariantKind::Translation => "Translation".into(),
+                            crate::lyrics::LyricVariantKind::Romanization => "Romanized".into(),
+                        }),
+                    lines: parsed.lines,
+                    synced: parsed.synced,
+                });
+            }
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1562,6 +1849,38 @@ mod tests {
         let parsed: SearchResponse = serde_json::from_str(raw).unwrap();
         let songs = parsed.results.songs.expect("songs present");
         assert_eq!(songs.data[0].id, "1440857781");
+    }
+
+    #[test]
+    fn apple_supplied_translation_and_pronunciation_are_preserved() {
+        let raw = serde_json::json!({
+            "data": [{"attributes": {
+                "ttml": "<tt><body><p begin='1s'>Original</p></body></tt>",
+                "translations": [{
+                    "languageName": "English",
+                    "ttml": "<tt><body><p begin='1s'>Translated</p></body></tt>"
+                }],
+                "pronunciations": [{
+                    "locale": "ja-Latn",
+                    "ttml": "<tt><body><p begin='1s'>Romanized</p></body></tt>"
+                }]
+            }}]
+        });
+        let lyrics = apple_lyrics_from_value(&raw).unwrap().unwrap();
+        assert_eq!(lyrics.lines[0].text, "Original");
+        assert_eq!(lyrics.variants.len(), 2);
+        assert!(
+            lyrics
+                .variants
+                .iter()
+                .any(|variant| variant.label.contains("English"))
+        );
+        assert!(
+            lyrics
+                .variants
+                .iter()
+                .any(|variant| variant.label.contains("ja-Latn"))
+        );
     }
 
     #[test]
@@ -1711,5 +2030,24 @@ mod tests {
     fn explore_labels_drop_only_empty_strings() {
         assert_eq!(nonempty("  ".into()), None);
         assert_eq!(nonempty("Top Songs".into()).as_deref(), Some("Top Songs"));
+    }
+
+    #[test]
+    fn credits_are_flattened_to_bounded_plain_roles_and_names() {
+        let response = serde_json::json!({
+            "data": [{
+                "attributes": { "title": "Songwriting" },
+                "relationships": { "artists": { "data": [
+                    { "attributes": { "name": "Example Person" } }
+                ]}}
+            }]
+        });
+        assert_eq!(
+            parse_song_credits(&response),
+            vec![SongCredit {
+                role: "Songwriting".into(),
+                names: vec!["Example Person".into()],
+            }]
+        );
     }
 }

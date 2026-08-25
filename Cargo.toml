@@ -52,7 +52,7 @@ xml-rs = "0.8"
 # relm4 owns the tokio runtime and runs our commands on it. We need `process`
 # and `io-util` directly: the sidecar is a long-lived child whose stdout we read
 # line by line, which is the one thing Pitwall never had to do.
-tokio = { version = "1", features = ["rt-multi-thread", "process", "io-util", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "process", "io-util", "sync", "time", "macros"] }
 
 # Track durations and the position clock.
 thiserror = "2"
@@ -62,5 +62,10 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ashpd = { version = "0.13.13", default-features = false, features = [
     "background",
     "dynamic_launcher",
+    "global_shortcuts",
+    "secret",
     "tokio",
 ] }
+futures-util = "0.3"
+ring = "0.17"
+zeroize = "1"

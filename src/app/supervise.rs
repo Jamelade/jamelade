@@ -8,7 +8,7 @@
 //! sidecar presenting as a healthy silent player is the failure this file
 //! exists to prevent.
 
-use relm4::ComponentSender;
+use relm4::{ComponentController, ComponentSender};
 
 use super::{AppModel, CommandMsg, Stage};
 use crate::player::protocol::{Command, Event};
@@ -360,6 +360,21 @@ impl AppModel {
         let changed = was.as_ref().is_some_and(|before| before != &now) && now.is_some();
         if changed {
             self.log_transition(was.is_some(), left_ms);
+            self.scrobbler.reset_track();
+            // End-of-track timers follow a natural MusicKit boundary only.
+            // Skipping disarms the timer rather than pausing the new song.
+            if self
+                .sleep_timer
+                .track_changed(now.as_deref(), left_ms <= 3_000)
+            {
+                self.send(Command::Pause);
+                self.player_view
+                    .emit(crate::components::player_view::PlayerViewInput::SleepTimerActive(false));
+                self.toast("Sleep timer paused playback");
+            } else if !self.sleep_timer.active() {
+                self.player_view
+                    .emit(crate::components::player_view::PlayerViewInput::SleepTimerActive(false));
+            }
         }
 
         if changed || was.is_none() {

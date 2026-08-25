@@ -222,6 +222,8 @@ pub enum NowPlayingOutput {
     OpenArtist,
     CopyLink,
     ToggleFavorite,
+    SetSleepTimer(crate::sleep_timer::Choice),
+    ShowCredits,
 }
 
 #[relm4::component(pub)]

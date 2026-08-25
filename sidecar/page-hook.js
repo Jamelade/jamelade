@@ -403,6 +403,8 @@ function allowedApiRoute(method, pathname) {
   if (!validApiId(parts[4])) return false
   if (parts.length === 5) return true
   if (kind === 'songs' && parts.length === 6 && parts[5] === 'lyrics') return true
+  if (kind === 'songs' && parts.length === 7
+      && parts[5] === 'view' && parts[6] === 'credits') return true
   if (kind === 'playlists' && parts.length === 6 && parts[5] === 'tracks') return true
   return kind === 'artists'
     && parts.length === 7
@@ -510,8 +512,79 @@ async function browserApiRequest({ requestId, method, path }) {
   }
 }
 
+function boundedUtf8(value, maximum, allowNewline = false) {
+  return typeof value === 'string'
+    && new TextEncoder().encode(value).length <= maximum
+    && !value.includes('\0')
+    && !value.includes('\r')
+    && (allowNewline || !value.includes('\n'))
+}
+
+function validCatalogSongs(songs, allowEmpty) {
+  return Array.isArray(songs)
+    && songs.length <= 1000
+    && (allowEmpty || songs.length > 0)
+    && songs.every((id) => typeof id === 'string' && /^[0-9]{1,32}$/.test(id))
+}
+
+function validPlaylistId(id) {
+  return typeof id === 'string'
+    && id.length > 0
+    && id.length <= 512
+    && /^[A-Za-z0-9._-]+$/.test(id)
+}
+
+function songRelationships(songs) {
+  return songs.map((id) => ({ id, type: 'songs' }))
+}
+
+async function playlistWrite(requestId, path, body) {
+  if (!Number.isSafeInteger(requestId) || requestId <= 0) {
+    throw new Error('invalid broker request id')
+  }
+  try {
+    const call = await waitForApiCall('post')
+    if (!call) {
+      emitApiResponse(requestId, 503, null)
+      return
+    }
+    const response = await accepted(() => call(path, body))
+    emitApiResponse(requestId, apiStatus(response) || 202, apiPayload(response))
+  } catch (err) {
+    emitApiResponse(requestId, apiStatus(err) || 502, null)
+  }
+}
+
+async function createPlaylist({ requestId, name, description = '', songs = [] }) {
+  if (!boundedUtf8(name, 512) || name.trim().length === 0
+      || !boundedUtf8(description, 4096, true)
+      || !validCatalogSongs(songs, true)) {
+    emitApiResponse(requestId, 400, null)
+    return
+  }
+  const body = {
+    attributes: { name, description },
+    relationships: { tracks: { data: songRelationships(songs) } },
+  }
+  await playlistWrite(requestId, '/v1/me/library/playlists', body)
+}
+
+async function addPlaylistTracks({ requestId, playlistId, songs }) {
+  if (!validPlaylistId(playlistId) || !validCatalogSongs(songs, false)) {
+    emitApiResponse(requestId, 400, null)
+    return
+  }
+  await playlistWrite(
+    requestId,
+    '/v1/me/library/playlists/' + encodeURIComponent(playlistId) + '/tracks',
+    { data: songRelationships(songs) },
+  )
+}
+
 const commands = {
   apiRequest: browserApiRequest,
+  createPlaylist,
+  addPlaylistTracks,
   async setQueue({ songs, startPosition = 0, startPlaying = true, startTimeMs = 0 }) {
     // BOTH keys, deliberately. MusicKit v3's setQueue forwards only
     // `startWith` to the queue descriptor:

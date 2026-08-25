@@ -113,6 +113,59 @@ pub struct Lyrics {
     pub synced: bool,
     pub instrumental: bool,
     pub source: Option<Provider>,
+    /// First-party alternatives embedded in Apple's bounded response. These
+    /// are never synthesized or fetched from another provider.
+    pub variants: Vec<LyricVariant>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LyricVariantKind {
+    Translation,
+    Romanization,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LyricVariant {
+    pub kind: LyricVariantKind,
+    pub label: String,
+    pub lines: Vec<Line>,
+    pub synced: bool,
+}
+
+impl Lyrics {
+    /// Index zero is always the original. Alternatives follow in the order
+    /// Apple supplied them and inherit only the source attribution.
+    pub fn selected(&self, index: usize) -> Self {
+        let Some(variant) = index.checked_sub(1).and_then(|at| self.variants.get(at)) else {
+            let mut original = self.clone();
+            original.variants.clear();
+            return original;
+        };
+        Self {
+            lines: variant.lines.clone(),
+            synced: variant.synced,
+            instrumental: false,
+            source: self.source,
+            variants: Vec::new(),
+        }
+    }
+
+    pub fn variant_labels(&self) -> Vec<String> {
+        let mut labels = Vec::with_capacity(self.variants.len() + 1);
+        labels.push(crate::i18n::tr("Original").to_owned());
+        labels.extend(self.variants.iter().map(|variant| {
+            let english = match variant.kind {
+                LyricVariantKind::Translation => "Translation",
+                LyricVariantKind::Romanization => "Romanized",
+            };
+            if let Some(detail) = variant.label.strip_prefix(english) {
+                format!("{}{}", crate::i18n::tr(english), detail)
+            } else {
+                variant.label.clone()
+            }
+        }));
+        labels
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -396,6 +449,7 @@ fn lyrics_from_wire(wire: &WireLyrics) -> Lyrics {
                 synced: true,
                 instrumental: false,
                 source: Some(Provider::Lrclib),
+                ..Lyrics::default()
             };
         }
     }
@@ -409,6 +463,7 @@ fn lyrics_from_wire(wire: &WireLyrics) -> Lyrics {
         synced: false,
         instrumental: false,
         source: Some(Provider::Lrclib),
+        ..Lyrics::default()
     }
 }
 
@@ -420,6 +475,7 @@ fn lyrics_from_ovh_wire(wire: Option<&LyricsOvhWire>) -> Lyrics {
         synced: false,
         instrumental: false,
         source: Some(Provider::LyricsOvh),
+        ..Lyrics::default()
     }
 }
 

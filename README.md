@@ -45,6 +45,9 @@ Jamelade follows synchronized lyrics while keeping the selected Jamkin visible.
 It tries Apple Music first. LRCLIB and Lyrics.ovh are independent, off-by-
 default fallbacks; Jamelade contacts only sources the user has enabled and
 stops at the first usable result. Successful results stay in memory.
+When Apple supplies a translation or romanization, it appears as a selectable
+variant. A per-song timing offset can correct early or late synchronized lyrics
+without storing titles or artists.
 [Lyrics sources](docs/LYRICS_SOURCES.md) explains what each provider receives.
 
 ### Jamkin companions
@@ -98,12 +101,34 @@ process-local **A–B** control for repeating a chosen section; it does not alte
 the normal queue repeat mode or write loop points to disk. See
 [A–B loop](docs/AB_LOOP.md).
 
+### Playlist and playback tools
+
+Jamelade can create an Apple Music playlist, add a song to an existing one,
+and export a playlist as M3U8, CSV, or JSON. Exports contain visible metadata
+and public Apple Music links, not account or library identifiers. The expanded
+player also includes a sleep timer and song credits. Optional global shortcuts
+use the desktop portal, so the desktop—not Jamelade—owns the chosen keys.
+
+Apple's documented API exposes playlist creation and appending, but not safe
+rename, removal, or reordering operations. Jamelade does not guess at
+undocumented destructive endpoints.
+
 ### Optional Discord Rich Presence
 
 Discord activity is off by default. If enabled, Jamelade can show the current
 song, artist, album, and listening Jamkin through the local Discord or Vesktop
 desktop client. It needs no Discord token and never sends lyrics, playlist
 names, Apple credentials, or artwork URLs.
+
+### Optional ListenBrainz scrobbling
+
+ListenBrainz scrobbling is off by default. If enabled, Jamelade submits title,
+artist, album, duration, and listen time after the normal scrobble threshold.
+Its token is encrypted with a per-app key from the desktop keyring; Apple
+identifiers, credentials, artwork, and lyrics are never included.
+
+The interface follows the system language by default and currently includes
+English and German. A language can also be selected in Preferences.
 
 ### A smaller, hardened web boundary
 
@@ -124,6 +149,8 @@ session is memory-only. Optional integrations never receive Apple credentials.
 | LRCLIB lyrics | Off | Track title, artist, album, duration, and the requester's IP address |
 | Lyrics.ovh lyrics | Off | Artist, title, and the requester's IP address; the service may query downstream lyric sites |
 | Discord activity | Off | Selected song metadata and Jamkin are handed to the local Discord client; Discord then applies its own privacy settings |
+| ListenBrainz | Off | Title, artist, album, duration, listen time, and the requester's IP address |
+| Global shortcuts | Off | Nothing leaves the device; the desktop portal stores the selected bindings |
 | Desktop Jamkin | On | Nothing extra; it reuses local playback and lyric state |
 | Glass palette and playlist collages | Local | Nothing; both are generated and cached on the device |
 

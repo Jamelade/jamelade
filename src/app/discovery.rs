@@ -130,6 +130,8 @@ impl AppModel {
             self.jamkin_mode.waiting();
             return;
         };
+        self.lyrics_view
+            .set_timing_offset(self.lyric_offsets.get(query.catalog_id.as_deref()));
 
         if self.lyrics_for.as_ref() == Some(&query) {
             // Loading, successfully shown, or showing the error from the one
@@ -167,13 +169,18 @@ impl AppModel {
     }
 
     pub(super) fn sync_lyrics_position(&self) {
+        let raw = self.player.interpolated_position_ms();
+        let offset = self
+            .lyrics_for
+            .as_ref()
+            .map(|query| self.lyric_offsets.get(query.catalog_id.as_deref()))
+            .unwrap_or(0);
         if self.view == View::Lyrics {
-            self.lyrics_view
-                .sync_position(self.player.interpolated_position_ms());
+            self.lyrics_view.sync_position(raw);
         }
         if self.settings.desktop_jamkin {
             self.jamkin_mode
-                .sync_position(self.player.interpolated_position_ms());
+                .sync_position(crate::lyric_timing::lyric_clock(raw, offset));
         }
     }
 

@@ -35,6 +35,27 @@ pub enum Command {
         path: String,
     },
 
+    /// Create a library playlist through Apple's documented write endpoint.
+    /// This is deliberately a typed command rather than an arbitrary broker
+    /// body: the renderer can receive only bounded text and numeric song IDs.
+    #[serde(rename = "createPlaylist", rename_all = "camelCase")]
+    CreatePlaylist {
+        request_id: u64,
+        name: String,
+        description: String,
+        songs: Vec<String>,
+    },
+
+    /// Append catalog songs to one library playlist. Apple documents append,
+    /// but not track removal, reordering, playlist deletion, or renaming; those
+    /// absent operations are intentionally not guessed here.
+    #[serde(rename = "addPlaylistTracks", rename_all = "camelCase")]
+    AddPlaylistTracks {
+        request_id: u64,
+        playlist_id: String,
+        songs: Vec<String>,
+    },
+
     /// Load a whole queue in ONE call and start playing at `start_position`.
     ///
     /// This is the gapless rule (ARCHITECTURE.md rule 3) expressed as a type: there
@@ -172,6 +193,8 @@ impl Command {
     pub fn name(&self) -> &'static str {
         match self {
             Self::ApiRequest { .. } => "apiRequest",
+            Self::CreatePlaylist { .. } => "createPlaylist",
+            Self::AddPlaylistTracks { .. } => "addPlaylistTracks",
             Self::SetQueue { .. } => "setQueue",
             Self::PlayStation { .. } => "playStation",
             Self::Play => "play",
