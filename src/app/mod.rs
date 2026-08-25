@@ -2722,7 +2722,7 @@ impl AppModel {
                 });
             }
             AppMsg::ShowShortcuts => show_shortcuts(root),
-            AppMsg::ShowAbout => show_about(root),
+            AppMsg::ShowAbout => show_about(root, self.settings.companion),
             AppMsg::OpenSupport => chrome::open_support(root),
             AppMsg::SetTheme(index) => {
                 self.settings.theme = Theme::from_index(index);

@@ -11,6 +11,8 @@
   Apple credentials.
 - Verified both app profiles, the browser broker, private storage, dependency
   advisories, and the narrowly scoped launcher-icon helper before packaging.
+- Fixed song-credit localization to follow Jamelade's interface language and
+  made About display the currently selected Jamkin tile.
 
 ## 1.0.0 — 2026-08-25
 

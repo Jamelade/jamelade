@@ -75,6 +75,19 @@ pub fn apple_lyrics_localization() -> (&'static str, &'static str) {
     }
 }
 
+/// Locale for Apple catalogue text that should follow Jamelade's interface.
+///
+/// Storefront chooses availability, not display language. Passing this as
+/// Apple's documented `l` query keeps credit headings from silently following
+/// the operating-system locale when Jamelade is explicitly set to English.
+pub fn apple_music_localization() -> &'static str {
+    if ACTIVE.load(Ordering::Relaxed) == GERMAN {
+        "de-DE"
+    } else {
+        "en-US"
+    }
+}
+
 fn detect_system_language() -> u8 {
     for name in ["LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"] {
         let Ok(value) = std::env::var(name) else {
@@ -162,6 +175,11 @@ pub fn tr(english: &'static str) -> &'static str {
         "Original" => "Original",
         "Translation" => "Übersetzung",
         "Romanized" => "Romanisiert",
+        "Song Credits" => "Titel-Credits",
+        "No credits supplied" => "Keine Credits angegeben",
+        "Apple Music did not return credits for this recording." => {
+            "Apple Music hat für diese Aufnahme keine Credits geliefert."
+        }
         "Nothing playing" => "Keine Wiedergabe",
         "No lyrics found" => "Keine Songtexte gefunden",
         "Instrumental" => "Instrumental",

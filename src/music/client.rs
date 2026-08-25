@@ -272,11 +272,9 @@ impl Client {
         {
             anyhow::bail!("invalid Apple Music catalog id");
         }
+        let locale = crate::i18n::apple_music_localization();
         let res = self
-            .get(&format!(
-                "/catalog/{}/songs/{catalog_id}?include=credits",
-                self.storefront
-            ))
+            .get(&song_credits_path(&self.storefront, catalog_id, locale))
             .await
             .context("requesting song credits")?;
         if res.status() == StatusCode::NOT_FOUND {
@@ -1684,6 +1682,12 @@ fn catalog_artist_path(storefront: &str, encoded_id: &str, include_albums: bool)
     format!("/catalog/{storefront}/artists/{encoded_id}?{include}extend=editorialNotes")
 }
 
+/// Credit headings are catalogue text, so availability follows the storefront
+/// while their language follows Jamelade's selected interface locale.
+fn song_credits_path(storefront: &str, catalog_id: &str, locale: &str) -> String {
+    format!("/catalog/{storefront}/songs/{catalog_id}?include=credits&l={locale}")
+}
+
 /// The tracks Apple attached to an album via `include=tracks`, or none.
 fn album_tracks(resource: &AlbumResource) -> Vec<Track> {
     resource
@@ -1936,6 +1940,14 @@ mod tests {
         assert_eq!(
             catalog_artist_path("us", "1234567890", false),
             "/catalog/us/artists/1234567890?extend=editorialNotes"
+        );
+    }
+
+    #[test]
+    fn credits_explicitly_request_the_interface_language() {
+        assert_eq!(
+            song_credits_path("de", "1000000001", "en-US"),
+            "/catalog/de/songs/1000000001?include=credits&l=en-US"
         );
     }
 

@@ -244,10 +244,10 @@ fn set_launcher_preview(picture: &gtk::Picture, companion: Companion) {
     picture.set_visible(paintable.is_some());
 }
 
-pub(super) fn show_about(parent: &adw::ApplicationWindow) {
+pub(super) fn show_about(parent: &adw::ApplicationWindow, companion: Companion) {
     let about = adw::AboutDialog::builder()
         .application_name(crate::APP_NAME)
-        .application_icon(crate::APP_ID)
+        .application_icon(companion.window_icon_name())
         .developer_name("Miguel Rincon and Jamelade contributors")
         .version(env!("CARGO_PKG_VERSION"))
         .license_type(gtk::License::Gpl30)
@@ -340,8 +340,10 @@ pub(super) fn show_credits(
         body.append(
             &adw::StatusPage::builder()
                 .icon_name("avatar-default-symbolic")
-                .title("No credits supplied")
-                .description("Apple Music did not return credits for this recording.")
+                .title(crate::i18n::tr("No credits supplied"))
+                .description(crate::i18n::tr(
+                    "Apple Music did not return credits for this recording.",
+                ))
                 .build(),
         );
     } else {
@@ -372,7 +374,7 @@ pub(super) fn show_credits(
             .build(),
     ));
     let dialog = adw::Dialog::builder()
-        .title("Song Credits")
+        .title(crate::i18n::tr("Song Credits"))
         .content_width(480)
         .content_height(520)
         .child(&toolbar)
