@@ -123,13 +123,6 @@ pub fn tr(english: &'static str) -> &'static str {
     match english {
         "Explore" => "Entdecken",
         "Search" => "Suchen",
-        "Recent searches" => "Letzte Suchanfragen",
-        "Remember search history" => "Suchverlauf speichern",
-        "Clear search history" => "Suchverlauf löschen",
-        "Right-click an entry to remove it" => "Eintrag zum Entfernen rechtsklicken",
-        "Click to search; right-click to remove" => {
-            "Klicken zum Suchen; rechtsklicken zum Entfernen"
-        }
         "Lyrics" => "Songtexte",
         "Songs" => "Titel",
         "Albums" => "Alben",

@@ -1,11 +1,5 @@
 # Changelog
 
-## Unreleased
-
-- Added an optional bounded local catalogue-search history with recent-query
-  reuse, right-click removal, a full-history wipe button, and a recording toggle
-  that deliberately preserves existing entries when switched off.
-
 ## 2.1.0 — 2026-08-25
 
 - Replaced the heavy four-sided adaptive text outline with a softer,

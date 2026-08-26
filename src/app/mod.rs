@@ -62,7 +62,6 @@ mod playlist_edit;
 mod queue;
 mod row_menu;
 mod scrobbling;
-mod search_history;
 mod segment_loop;
 mod status;
 mod supervise;
@@ -329,8 +328,6 @@ pub struct AppModel {
     /// search you were in the middle of.
     library_query: String,
     catalog_query: String,
-    search_history: search_history::History,
-    search_controls: search_history::Controls,
     /// Which sidebar section is showing. `scope()` derives the search scope
     /// from it; never store both.
     view: View,
@@ -615,9 +612,6 @@ pub enum AppMsg {
     SearchChanged(String),
     /// The debounce elapsed for this generation; run the catalog search.
     RunCatalogSearch(u64),
-    UseSearchHistory(String),
-    RemoveSearchHistory(String),
-    ClearSearchHistory,
     SetView(View),
     /// A card on Explore was clicked.
     ExploreAction(ExploreAction),
@@ -753,8 +747,6 @@ pub enum AppMsg {
     },
     /// Share current-track display metadata with the local Discord client.
     SetDiscordActivity(bool),
-    /// Record future catalogue searches locally without deleting old entries.
-    SetSearchHistoryEnabled(bool),
     ConfigureGlobalShortcuts,
     DisableGlobalShortcuts,
     ShowListenBrainzSetup,
@@ -1281,8 +1273,61 @@ impl Component for AppModel {
                                                 set_title: model.view.title(),
                                             },
 
-                                            #[local_ref]
-                                            add_named[Some("search")] = search_controls -> gtk::Box {},
+                                            #[name = "search_entry"]
+                                            add_named[Some("search")] = &gtk::SearchEntry {
+                                                // Never a fixed width: 320px here
+                                                // was a floor under the window and
+                                                // the app could not be tiled.
+                                                // `max-width-chars` is a ceiling,
+                                                // so it is safe — 60 fills a narrow
+                                                // header and stops short of absurd
+                                                // on a wide one.
+                                                set_hexpand: true,
+                                                set_max_width_chars: 60,
+                                                // Typing here before the browser
+                                                // session arrives queries a catalog that
+                                                // cannot answer.
+                                                #[watch]
+                                                set_sensitive: model.controls_live(),
+                                                #[watch]
+                                                set_placeholder_text: Some(match model.view {
+                                                    View::Explore | View::Lyrics => "Search Apple Music",
+                                                    View::Songs => "Search your library",
+                                                    View::Albums => "Search albums",
+                                                    View::Artists => "Search artists",
+                                                    View::Playlists => "Search playlists",
+                                                    View::Search => "Search Apple Music",
+                                                }),
+                                                connect_search_changed[sender] => move |entry| {
+                                                    sender.input(AppMsg::SearchChanged(entry.text().into()));
+                                                },
+                                                // Escape, as it cancels every other
+                                                // search in GNOME.
+                                                //
+                                                // The entry is emptied here rather
+                                                // than left to the reducer: it is
+                                                // the *source* of the query, so
+                                                // nothing writes back to it, and
+                                                // clearing only the model left the
+                                                // words sitting in a field over an
+                                                // unfiltered list.
+                                                //
+                                                // `SearchChanged` as well, because
+                                                // `search-changed` is delayed and
+                                                // the list should stop filtering
+                                                // now; it returns early when the
+                                                // delayed one arrives after it.
+                                                // And `ShowSearch`, because on a
+                                                // wide header the box is never
+                                                // "open" — that message would drop
+                                                // a value it already holds and
+                                                // Escape would close nothing.
+                                                connect_stop_search[sender] => move |entry| {
+                                                    entry.set_text("");
+                                                    sender.input(AppMsg::SearchChanged(String::new()));
+                                                    sender.input(AppMsg::ShowSearch(false));
+                                                },
+                                            },
 
                                             #[watch]
                                             set_visible_child_name: if model.search_showing() {
@@ -1541,9 +1586,6 @@ impl Component for AppModel {
                                             set_description: Some(
                                                 "Find songs from the whole catalogue, not just your library.",
                                             ),
-                                            #[wrap(Some)]
-                                            #[local_ref]
-                                            set_child = search_history_panel -> gtk::Box {},
                                         },
 
                                         // Distinct from "status": an empty
@@ -1745,8 +1787,6 @@ impl Component for AppModel {
             move || disable_sender.input(AppMsg::SetDesktopJamkin(false)),
         );
         let discord_presence = crate::discord::Presence::new(settings.discord_activity);
-        let search_history = search_history::History::load();
-        let search_controls = search_history::Controls::new(&sender, &search_history);
 
         let mut model = AppModel {
             stage: Stage::Starting,
@@ -1798,8 +1838,6 @@ impl Component for AppModel {
             all_tracks: Vec::new(),
             library_query: String::new(),
             catalog_query: String::new(),
-            search_history,
-            search_controls,
             view: View::from(settings.section),
             sorts: view::Sorts {
                 songs: view::Sort {
@@ -1956,11 +1994,6 @@ impl Component for AppModel {
         // while the model already owns it.
         let osd_revealer = model.volume_osd.revealer.clone();
         let volume_osd = &osd_revealer;
-        model
-            .search_controls
-            .sync_context(model.view, model.controls_live());
-        let search_controls = model.search_controls.widget();
-        let search_history_panel = model.search_controls.panel();
         let widgets = view_output!();
 
         wiring::connect(&mut model, &widgets, &root, &sender);
@@ -2041,7 +2074,7 @@ impl Component for AppModel {
             // `set_text` fires `search-changed`, but `SearchChanged` returns
             // early when the text already matches the active query — which it
             // does by now, because `update` set it first. No loop.
-            self.search_controls.entry.set_text(self.query());
+            widgets.search_entry.set_text(self.query());
             self.sync_sort_menu(&widgets.sort_button);
         }
 
@@ -2050,18 +2083,15 @@ impl Component for AppModel {
         // that is the whole reason this is a flag rather than a `grab_focus`
         // at the call site.
         if std::mem::take(&mut self.sync_entry) {
-            self.search_controls.entry.set_text(self.query());
+            widgets.search_entry.set_text(self.query());
         }
         if std::mem::take(&mut self.focus_search) {
-            self.search_controls.entry.grab_focus();
+            widgets.search_entry.grab_focus();
             // Typing appends, so the caret belongs after what is already there.
             // `grab_focus` on an entry selects all of it, and the next
             // keystroke would replace the character that opened the search.
-            self.search_controls.entry.set_position(-1);
+            widgets.search_entry.set_position(-1);
         }
-
-        self.search_controls
-            .sync_context(self.view, self.controls_live());
 
         let painting = std::time::Instant::now();
         self.update_view(widgets, sender);
@@ -2097,8 +2127,6 @@ impl Component for AppModel {
         // moved into its position.
         self.sync_pins(widgets, &sender);
         self.sync_section_spinners();
-        self.search_controls
-            .sync_context(self.view, self.controls_live());
         self.update_view(widgets, sender);
     }
 
@@ -2464,35 +2492,7 @@ impl AppModel {
                 if generation != self.search_gen {
                     return; // a later keystroke superseded this one
                 }
-                if self.settings.search_history_enabled
-                    && self.search_history.record(&self.catalog_query)
-                {
-                    self.search_history.save();
-                    self.search_controls.sync(&self.search_history, &sender);
-                }
                 self.run_catalog_search(&sender, generation, 0);
-            }
-            AppMsg::UseSearchHistory(query) => {
-                if self.view != View::Search {
-                    self.handle(AppMsg::SetView(View::Search), &sender, root);
-                }
-                self.searching = self.narrow_header;
-                self.sync_entry = true;
-                self.handle(AppMsg::SearchChanged(query), &sender, root);
-            }
-            AppMsg::RemoveSearchHistory(query) => {
-                if self.search_history.remove(&query) {
-                    self.search_history.save();
-                    self.search_controls.sync(&self.search_history, &sender);
-                    self.toast("Search removed from history");
-                }
-            }
-            AppMsg::ClearSearchHistory => {
-                if self.search_history.clear() {
-                    self.search_history.save();
-                    self.search_controls.sync(&self.search_history, &sender);
-                    self.toast("Search history cleared");
-                }
             }
             AppMsg::SetCatalogFilter(filter) => {
                 if filter == self.catalog_filter {
@@ -3218,18 +3218,6 @@ impl AppModel {
                 } else {
                     self.toast("Discord activity is off");
                 }
-            }
-            AppMsg::SetSearchHistoryEnabled(enabled) => {
-                if self.settings.search_history_enabled == enabled {
-                    return;
-                }
-                self.settings.search_history_enabled = enabled;
-                self.settings.save();
-                self.toast(if enabled {
-                    "Search history recording is on"
-                } else {
-                    "Search history recording is off; existing entries were kept"
-                });
             }
             AppMsg::ConfigureGlobalShortcuts => {
                 if self.global_shortcuts_stop.is_some() {

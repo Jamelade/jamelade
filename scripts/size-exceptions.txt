@@ -6,7 +6,7 @@
 # needs to be a deliberate line in a diff.
 #
 # path                              max   why
-src/app/mod.rs                      4422  # the model, the messages, `view!` and both reducers.
+src/app/mod.rs                      4410  # the model, the messages, `view!` and both reducers.
                                           # Playlist tools, timers, credits, portals, scrobbling,
                                           # lyric variants and timing cross the root state here;
                                           # their I/O and widgets remain in focused modules.
@@ -138,17 +138,11 @@ src/app/mod.rs                      4422  # the model, the messages, `view!` and
                                           # messages/reducer arms; each renderer remains outside.
                                           # 4418 -> 4426: one shared four-second toast constructor
                                           # keeps ordinary notices transient; decisions remain dialogs.
-                                          # 4410 -> 4418: four bounded search-history intents and two
-                                          # fields cross the root model; storage and widgets are split.
-                                          # 4418 -> 4422: the empty Search status page receives the
-                                          # separately owned recent-history panel.
-src/app/chrome.rs                   1099  # menus and the dialogs they open. Jamelade's companion
+src/app/chrome.rs                   1080  # menus and the dialogs they open. Jamelade's companion
                                           # Credits and the opt-in connection/language rows use
                                           # native dialogs; their behavior remains elsewhere.
                                           # 1078 -> 1080: About receives the selected companion and
                                           # resolves its existing local icon name; no new I/O lives here.
-                                          # 1080 -> 1099: one local-history preference explains that
-                                          # disabling recording preserves existing entries.
                                           # 947 -> 948: the theme row reads its ordered labels from
                                           # the split settings/theme.rs model instead of a literal.
                                           # preference includes a local image preview and updates its

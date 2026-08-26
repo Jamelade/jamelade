@@ -168,9 +168,6 @@ pub struct Settings {
     /// Submit completed listens to ListenBrainz. The bearer token is never
     /// stored here; it lives in a separately encrypted private file.
     pub listenbrainz_scrobbling: bool,
-    /// Remember completed Apple Music catalogue searches in a bounded local
-    /// cache. Turning this off stops new entries without deleting old ones.
-    pub search_history_enabled: bool,
     /// Permit metadata for the current track to be sent to LRCLIB after Apple
     /// Music has no useful lyric. Off by default: this is a third-party
     /// disclosure and requires an explicit opt in even though it never contains
@@ -287,7 +284,6 @@ impl Default for Settings {
             discord_activity: false,
             global_shortcuts: false,
             listenbrainz_scrobbling: false,
-            search_history_enabled: true,
             lyrics_enabled: false,
             lyrics_ovh_enabled: false,
             // Nothing pinned until somebody pins something. An app that
@@ -349,9 +345,6 @@ impl Settings {
         }
         if let Ok(enabled) = file.boolean(GROUP, "listenbrainz-scrobbling") {
             settings.listenbrainz_scrobbling = enabled;
-        }
-        if let Ok(enabled) = file.boolean(GROUP, "search-history-enabled") {
-            settings.search_history_enabled = enabled;
         }
         if let Ok(enabled) = file.boolean(GROUP, "lyrics-enabled") {
             settings.lyrics_enabled = enabled;
@@ -479,7 +472,6 @@ impl Settings {
             "listenbrainz-scrobbling",
             self.listenbrainz_scrobbling,
         );
-        file.set_boolean(GROUP, "search-history-enabled", self.search_history_enabled);
         file.set_boolean(GROUP, "lyrics-enabled", self.lyrics_enabled);
         file.set_boolean(GROUP, "lyrics-ovh-enabled", self.lyrics_ovh_enabled);
         file.set_string(GROUP, "section", self.section.as_str());
@@ -643,7 +635,6 @@ mod tests {
         let defaults = Settings::default();
         assert!(!defaults.global_shortcuts);
         assert!(!defaults.listenbrainz_scrobbling);
-        assert!(defaults.search_history_enabled);
         assert_eq!(defaults.language, crate::i18n::Language::System);
     }
 
@@ -716,7 +707,6 @@ mod tests {
              discord-activity=true\n\
              global-shortcuts=true\n\
              listenbrainz-scrobbling=true\n\
-             search-history-enabled=false\n\
              language=de\n\
              lyrics-enabled=true\n\
              lyrics-ovh-enabled=true\n",
@@ -741,7 +731,6 @@ mod tests {
         assert!(stored.discord_activity);
         assert!(stored.global_shortcuts);
         assert!(stored.listenbrainz_scrobbling);
-        assert!(!stored.search_history_enabled);
         assert_eq!(stored.language, crate::i18n::Language::German);
         assert!(stored.lyrics_enabled);
         assert!(stored.lyrics_ovh_enabled);

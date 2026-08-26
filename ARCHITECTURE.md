@@ -74,9 +74,6 @@ playback, Chromium, and Widevine.
   successful lyrics remain in memory.
 - `src/lyric_timing.rs` stores only numeric catalogue IDs and bounded offsets;
   it never writes lyric text or listening metadata.
-- `src/app/search_history.rs` stores at most 20 bounded catalogue queries in a
-  private local cache. Recording is independently switchable; disabling it
-  never silently deletes existing entries.
 - `src/scrobble.rs` is off by default, encrypts its token with the desktop
   Secret portal, and can submit only bounded visible metadata to one fixed
   ListenBrainz HTTPS endpoint.

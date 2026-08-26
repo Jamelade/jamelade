@@ -33,12 +33,6 @@ account, alongside recent listening, heavy rotation, radio, and storefront
 charts. The shelves are native widgets rather than an embedded copy of Apple's
 website.
 
-Catalogue search can remember up to 20 recent queries in a private local cache.
-The empty Search page shows them beneath its prompt: selecting an entry reruns
-it, while a right-click removes it. The trash button beside the search field
-clears all entries. Recording can be disabled in Preferences without deleting
-the entries already stored.
-
 ### Rich artist pages
 
 Artist pages combine the latest release, top songs, albums, and the biography
@@ -159,7 +153,6 @@ session is memory-only. Optional integrations never receive Apple credentials.
 | Discord activity | Off | Selected song metadata and Jamkin are handed to the local Discord client; Discord then applies its own privacy settings |
 | ListenBrainz | Off | Title, artist, album, duration, listen time, and the requester's IP address |
 | Global shortcuts | Off | Nothing leaves the device; the desktop portal stores the selected bindings |
-| Search history | On | Nothing extra; completed catalogue queries stay in Jamelade's bounded local cache |
 | Desktop Jamkin | On | Nothing extra; it reuses local playback and lyric state |
 | Glass palette and playlist collages | Local | Nothing; both are generated and cached on the device |
 
