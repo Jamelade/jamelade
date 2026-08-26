@@ -927,6 +927,24 @@ impl AppModel {
         }
         jamkin.add(&edge_walk);
 
+        let search = adw::PreferencesGroup::builder()
+            .title(crate::i18n::tr("Search"))
+            .build();
+        let remember_searches = adw::SwitchRow::builder()
+            .title(crate::i18n::tr("Remember search history"))
+            .subtitle(
+                "Stores recent Apple Music searches only on this device; turning this off keeps existing entries",
+            )
+            .active(self.settings.search_history_enabled)
+            .build();
+        {
+            let sender = sender.clone();
+            remember_searches.connect_active_notify(move |row| {
+                sender.input(AppMsg::SetSearchHistoryEnabled(row.is_active()));
+            });
+        }
+        search.add(&remember_searches);
+
         // No group description. It carried a caveat about notifications needing
         // the app to be installed, which is a **developer's** problem — anyone
         // who has Preferences open from a Flatpak or `make install` is already
@@ -1071,6 +1089,7 @@ impl AppModel {
 
         page.add(&appearance);
         page.add(&jamkin);
+        page.add(&search);
         page.add(&notifications);
         page.add(&connections);
         page.add(&privacy);

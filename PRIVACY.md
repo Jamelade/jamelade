@@ -63,14 +63,16 @@ in-memory lyric cache when lyric consent changes.
 
 Jamelade stores preferences, bounded artwork and playlist caches, the encrypted
 Apple-cookie vault, and Chromium's downloaded Widevine component in its own XDG
-directories. Per-song lyric timing stores only numeric catalogue IDs and
-offsets. Playlist export writes a user-chosen file containing visible metadata
-and public links. It requests no broad home-directory access in the Flatpak. The
-AppImage is a native executable and therefore inherits the invoking user's
-normal filesystem permissions, although Jamelade's code continues to use only
-its documented XDG locations. Sign out removes Jamelade's saved Apple session.
-Uninstalling without deleting app data may leave local settings and caches
-behind.
+directories. When enabled, search history keeps at most 20 bounded catalogue
+queries in Jamelade's private cache; disabling recording preserves existing
+entries until they are removed individually or wiped from the search bar.
+Per-song lyric timing stores only numeric catalogue IDs and offsets. Playlist
+export writes a user-chosen file containing visible metadata and public links.
+It requests no broad home-directory access in the Flatpak. The AppImage is a
+native executable and therefore inherits the invoking user's normal filesystem
+permissions, although Jamelade's code continues to use only its documented XDG
+locations. Sign out removes Jamelade's saved Apple session. Uninstalling without
+deleting app data may leave local settings and caches behind.
 
 ## Issue reports
 
