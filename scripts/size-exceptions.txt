@@ -327,7 +327,7 @@ src/app/library.rs                   859  # four collections and the catalog sea
                                           # 850 -> 855: asynchronous loads carry the account generation
                                           # that prevents a signed-out account repopulating the UI.
                                           # 855 -> 858: fixtures state the optional public share URL.
-src/player/protocol.rs               952  # the whole sidecar contract in one file, deliberately
+src/player/protocol.rs               963  # the whole sidecar contract in one file, deliberately
                                           # Two typed playlist-write commands avoid an arbitrary
                                           # credential-bearing request-body capability.
                                           # (rule 9). Splitting it would hide the drift it exists
@@ -354,6 +354,8 @@ src/player/protocol.rs               952  # the whole sidecar contract in one fi
                                           # booleans now cross for session state; Apple credentials do not.
                                           # 913 -> 931: HTTP status is range-checked at the protocol
                                           # boundary, with malformed-status and oversized-body tests.
+                                          # 952 -> 963: one credential-free keyring-restore failure
+                                          # event and its parse regression keep vault errors typed.
 src/components/player_view/mod.rs   1080  # the model, `view!` and the reducer. The transport
                                           # Sleep-timer state and credits forward through the one
                                           # expanded-player model.

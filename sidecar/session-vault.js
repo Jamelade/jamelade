@@ -12,6 +12,7 @@ const MAX_COOKIE_VALUE = 16 * 1024
 const MAX_PLAINTEXT_BYTES = 2 * 1024 * 1024
 const MAX_VAULT_BYTES = 3 * 1024 * 1024
 const SAVE_DEBOUNCE_MS = 250
+const RESTORE_RETRY_DELAYS_MS = [250, 750, 1_500, 2_500]
 const SAME_SITE = new Set(['unspecified', 'no_restriction', 'lax', 'strict'])
 
 function boundedString(value, maximum, allowEmpty = true) {
@@ -163,6 +164,10 @@ async function readPrivate(filePath, maximum) {
  */
 function createCookieVault({ safeStorage, cookieStore, filePath, onError }) {
   let suppressed = false
+  // No writes until an existing vault was restored, found missing, or the
+  // user explicitly completed a replacement sign-in. A locked keyring must
+  // never turn a valid encrypted session into a tiny anonymous-cookie vault.
+  let writable = false
   let timer = null
   let saveChain = Promise.resolve()
   let watching = false
@@ -172,7 +177,7 @@ function createCookieVault({ safeStorage, cookieStore, filePath, onError }) {
   }
 
   async function saveNow() {
-    if (suppressed) return
+    if (suppressed || !writable) return
     const cookies = (await cookieStore.get({})).map(appleCookie).filter(Boolean)
     if (cookies.length > MAX_COOKIE_COUNT) {
       throw new Error('refusing to persist an excessive number of Apple cookies')
@@ -194,7 +199,7 @@ function createCookieVault({ safeStorage, cookieStore, filePath, onError }) {
   }
 
   function queueSave() {
-    if (suppressed) return
+    if (suppressed || !writable) return
     clearTimeout(timer)
     timer = setTimeout(() => {
       timer = null
@@ -202,25 +207,51 @@ function createCookieVault({ safeStorage, cookieStore, filePath, onError }) {
     }, SAVE_DEBOUNCE_MS)
   }
 
-  async function restore() {
+  async function restore(delays = RESTORE_RETRY_DELAYS_MS) {
     suppressed = true
     try {
-      const encrypted = await readPrivate(filePath, MAX_VAULT_BYTES)
-      const cookies = parseSnapshot(safeStorage.decryptString(encrypted))
-      for (const cookie of cookies) {
-        await cookieStore.set(cookieSetDetails(cookie))
+      let lastError = null
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          const encrypted = await readPrivate(filePath, MAX_VAULT_BYTES)
+          const cookies = parseSnapshot(safeStorage.decryptString(encrypted))
+          for (const cookie of cookies) {
+            await cookieStore.set(cookieSetDetails(cookie))
+          }
+          writable = true
+          return 'restored'
+        } catch (err) {
+          if (err && err.code === 'ENOENT') {
+            writable = true
+            return 'missing'
+          }
+          lastError = err
+          const wait = delays[attempt]
+          if (!Number.isFinite(wait) || wait < 0) break
+          await new Promise((resolve) => setTimeout(resolve, wait))
+        }
       }
-    } catch (err) {
-      if (!err || err.code !== 'ENOENT') report(err)
+      writable = false
+      report(lastError)
+      return 'failed'
     } finally {
       suppressed = false
     }
   }
 
   function watch() {
-    if (watching) return
+    if (watching || !writable) return false
     watching = true
     cookieStore.on('changed', queueSave)
+    return true
+  }
+
+  // Called only after Apple's visible login completed in this process. At
+  // that point replacing an unreadable old session is an explicit user action,
+  // not an anonymous page load racing a locked keyring.
+  function allowReplacement() {
+    writable = true
+    watch()
   }
 
   function suspend() {
@@ -238,16 +269,17 @@ function createCookieVault({ safeStorage, cookieStore, filePath, onError }) {
     timer = null
     await saveChain
     await removeIfPresent(filePath)
+    writable = true
   }
 
   async function flush() {
     clearTimeout(timer)
     timer = null
     await saveChain
-    if (!suppressed) await saveNow()
+    if (!suppressed && writable) await saveNow()
   }
 
-  return { clearSaved, flush, restore, resume, suspend, watch }
+  return { allowReplacement, clearSaved, flush, restore, resume, suspend, watch }
 }
 
 module.exports = {
@@ -257,4 +289,5 @@ module.exports = {
   ensurePrivateDir,
   parseSnapshot,
   readPrivate,
+  writePrivate,
 }

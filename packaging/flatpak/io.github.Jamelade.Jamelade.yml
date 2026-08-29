@@ -172,6 +172,9 @@ modules:
       - install -Dm644 sidecar/security.js /app/share/jamelade/sidecar/security.js
       - install -Dm644 sidecar/auth-preload.js /app/share/jamelade/sidecar/auth-preload.js
       - install -Dm644 sidecar/session-vault.js /app/share/jamelade/sidecar/session-vault.js
+      - install -Dm644 sidecar/login-email.js /app/share/jamelade/sidecar/login-email.js
+      - install -Dm644 sidecar/login-email-assist.js /app/share/jamelade/sidecar/login-email-assist.js
+      - install -Dm644 sidecar/persistence.js /app/share/jamelade/sidecar/persistence.js
       - mkdir -p /app/share/jamelade/sidecar/node_modules/electron/dist
       - cp -a electron-dist/. /app/share/jamelade/sidecar/node_modules/electron/dist/
       # zypak has to be the *direct* parent of Chromium, and Chromium is the

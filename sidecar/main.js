@@ -42,7 +42,8 @@ const {
   safeErrorDetail,
   serializedSize,
 } = require('./security')
-const { createCookieVault } = require('./session-vault')
+const { createPersistence } = require('./persistence')
+const { createLoginEmailAssist } = require('./login-email-assist')
 
 // JAMELADE_SHOW_SIDECAR=1 keeps the window on screen. This is the fastest way
 // to tell a frozen renderer from a broken command: if playback works with the
@@ -77,9 +78,11 @@ const runtime = runtimeIdentity(process.env.JAMELADE_SIDECAR_IDENTITY)
 /// Where the live login lives. No `persist:` prefix: all Chromium-managed
 /// storage is memory-only. The encrypted cookie vault is the sole persistence.
 const activePartition = runtime.partition
-let cookieVault = null
+let persistence = null
+let loginEmailAssist = null
 let playerSession = null
 let shuttingDown = false
+const authContents = new Set()
 const PAGE_HOOK = fs.readFileSync(path.join(__dirname, 'page-hook.js'), 'utf8')
 /// How the window stays out of the way. Set JAMELADE_SIDECAR_WINDOW to override:
 ///
@@ -334,20 +337,6 @@ function configurePlayerSession() {
   playerSession.on('will-download', (event) => event.preventDefault())
 }
 
-function chooseCookiePartition() {
-  let backend = 'unknown'
-  let encryptionAvailable = false
-  try {
-    encryptionAvailable = safeStorage.isEncryptionAvailable()
-    if (process.platform === 'linux') backend = safeStorage.getSelectedStorageBackend()
-  } catch {
-    encryptionAvailable = false
-  }
-  const persistent = mayPersistCookies(encryptionAvailable, backend)
-  send({ event: 'storage-mode', persistent })
-  return persistent
-}
-
 // ---------------------------------------------------------------------------
 // Window
 // ---------------------------------------------------------------------------
@@ -390,7 +379,13 @@ async function createWindow() {
 
   configureNavigation(win.webContents, true)
   win.webContents.on('did-create-window', (child) => {
+    authContents.add(child.webContents)
+    child.once('closed', () => authContents.delete(child.webContents))
     configureNavigation(child.webContents, false)
+    // Apple may open its account form after the initial login page has been
+    // visible for a while. Give that newly created, Apple-only frame its own
+    // bounded observation window instead of relying on the earlier timer.
+    if (loginRefreshPending && loginEmailAssist) loginEmailAssist.start()
   })
 
   // Signing in navigates the page, which tears down the old preload context
@@ -447,6 +442,7 @@ async function createWindow() {
 /// shell. `concealed` is the fallback: mapped but 1x1, transparent and
 /// click-through, for a compositor that freezes unmapped renderers.
 function conceal() {
+  if (loginEmailAssist) loginEmailAssist.stop()
   // Tell the OS this process must not be suspended. On its own this does not
   // stop Chromium's per-page freezing, but without it a laptop on battery can
   // suspend the whole sidecar mid-track.
@@ -481,6 +477,7 @@ function reveal() {
   // post-auth refresh below. Restored sessions arrive authorized at startup
   // and must not enter a reload loop.
   loginRefreshPending = true
+  if (loginEmailAssist) loginEmailAssist.start()
   win.setOpacity(1)
   win.setIgnoreMouseEvents(false)
   win.setSkipTaskbar(false)
@@ -517,12 +514,10 @@ async function refreshPlayerAfterLogin() {
   // Persist the completed session before replacing the document. The live
   // in-memory cookie store is already authoritative, so a vault failure must
   // not strand playback in preview mode.
-  if (cookieVault) {
-    try {
-      await cookieVault.flush()
-    } catch {
-      log('cookie vault flush after sign-in failed')
-    }
+  try {
+    if (persistence) await persistence.explicitLogin()
+  } catch {
+    log('cookie vault flush after sign-in failed')
   }
 
   try {
@@ -639,7 +634,7 @@ async function signOut() {
     }
   }
 
-  if (cookieVault) cookieVault.suspend()
+  if (persistence) persistence.suspend()
   try {
     // Cookies, every web storage that can hold an identity, and cached HTTP
     // responses that could contain library data. The Widevine CDM is outside
@@ -657,7 +652,7 @@ async function signOut() {
       ],
     })
     await playerSession.clearCache()
-    if (cookieVault) await cookieVault.clearSaved()
+    if (persistence) await persistence.clearSaved()
     log('session cleared')
   } catch (err) {
     // Say so rather than reporting a sign-out that did not happen — this is the
@@ -666,7 +661,7 @@ async function signOut() {
     send({ event: 'error', code: 'sign-out-failed', detail: safeErrorDetail(err) })
     return
   } finally {
-    if (cookieVault) cookieVault.resume()
+    if (persistence) persistence.resume()
   }
 
   // Reload so the next sign-in starts from a document that never saw the old
@@ -687,9 +682,9 @@ async function signOut() {
 async function shutdown() {
   if (shuttingDown) return
   shuttingDown = true
-  if (cookieVault) {
+  if (persistence) {
     try {
-      await cookieVault.flush()
+      await persistence.flush()
     } catch {
       log('cookie vault flush failed')
     }
@@ -755,7 +750,6 @@ function drainPending() {
 // ---------------------------------------------------------------------------
 
 app.whenReady().then(async () => {
-  const persistent = chooseCookiePartition()
   // `cache: false` is part of the privacy boundary. A Chromium HTTP cache can
   // retain request URLs and first-party responses after a crash even when its
   // cookies and web storage are memory-only. Jamelade already has a bounded,
@@ -770,16 +764,22 @@ app.whenReady().then(async () => {
     log('legacy HTTP cache could not be cleared')
   }
   configurePlayerSession()
-  if (persistent) {
-    cookieVault = createCookieVault({
-      safeStorage,
-      cookieStore: playerSession.cookies,
-      filePath: path.join(app.getPath('userData'), 'apple-session.vault'),
-      onError: () => log('cookie vault operation failed'),
-    })
-    await cookieVault.restore()
-    cookieVault.watch()
-  }
+  persistence = createPersistence({
+    app,
+    cookieStore: playerSession.cookies,
+    safeStorage,
+    mayPersistCookies,
+    send,
+    log,
+    blocked: logBlocked,
+  })
+  await persistence.start()
+  loginEmailAssist = createLoginEmailAssist({
+    getContents: () => [win && win.webContents, ...authContents].filter(Boolean),
+    isTrustedAppleUrl,
+    currentEmail: () => persistence.currentEmail(),
+    rememberEmail: (email) => persistence.rememberEmail(email),
+  })
   try {
     // castLabs ECS: the Widevine CDM arrives through Chromium's component
     // updater, so this can take a moment on first run and needs network.

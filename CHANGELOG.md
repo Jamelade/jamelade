@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Added bounded keyring-readiness and cookie-vault restore retries. A failed
+  restore now preserves the encrypted session and disables anonymous-cookie
+  writes until an explicit Apple login supersedes it.
+- Added keyring-encrypted storage for the previous Apple ID email. A bounded
+  main-process helper can observe and prefill fixed email/username-like fields
+  only during a visible login in validated Apple frames. It waits for a
+  complete, stable address instead of persisting a typing prefix; the auth
+  preload remains empty and passwords stay outside Jamelade's storage and IPC.
+
 ## 2.1.0 — 2026-08-25
 
 - Replaced the heavy four-sided adaptive text outline with a softer,

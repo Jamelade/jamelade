@@ -24,7 +24,7 @@ closed on hosts that prohibit Chromium's available sandbox mechanisms.
 | --- | --- |
 | Network | Apple sign-in, APIs, playback, artwork, Widevine updates, and enabled lyric providers |
 | Wayland/fallback X11, PulseAudio, DRI, shared IPC | Display, audio, accelerated GTK, and Electron sandbox integration |
-| `org.freedesktop.secrets` | Encrypt persisted Apple cookies; without it the session is memory-only |
+| `org.freedesktop.secrets` | Encrypt persisted Apple cookies and the remembered login email; without it the session is memory-only and no email is saved |
 | MPRIS and Jamelade launcher names | Desktop media controls and the portal-managed launcher |
 | `io.github.Jamelade.IconHelper` | Optional three-choice same-user launcher helper |
 | Three narrow runtime paths | Local Discord/Vesktop IPC only after Rich Presence is enabled |
@@ -84,6 +84,7 @@ AppImage follows the normal XDG config and cache roots instead.
 | Data | Handling |
 | --- | --- |
 | Apple session | Validated secure Apple cookies only, encrypted through the desktop keyring, mode 0600 inside a mode-0700 directory |
+| Last login email | Separate bounded keyring-encrypted file, mode 0600; the Apple password is never inspected or stored |
 | Apple tokens | Remain inside Apple/MusicKit; Rust never stores them |
 | Settings and queue | Bounded user-only files |
 | Library metadata and artwork | App-private bounded caches; artwork filenames do not contain titles |
@@ -93,7 +94,9 @@ AppImage follows the normal XDG config and cache roots instead.
 | Widevine | Chromium component files in the private app directory; absent from source and packages |
 
 Explicit sign-out stops vault writes, clears cookies/web storage and
-account-derived caches, removes the vault, and clears Discord activity.
+account-derived caches, removes the session vault, and clears Discord activity.
+The separately encrypted email remains available to prefill a later Apple login
+until the user deletes Jamelade's application data.
 
 ## Logging and updates
 

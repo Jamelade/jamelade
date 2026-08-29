@@ -213,6 +213,12 @@ impl AppModel {
                     self.toast("Secure keyring unavailable — sign-in will be forgotten when Jamelade closes");
                 }
             }
+            Event::StorageRestoreFailed => {
+                tracing::warn!("encrypted Apple session preserved after keyring restore failure");
+                self.toast(
+                    "KWallet was not ready — your saved Apple session was preserved; unlock it and restart Jamelade",
+                );
+            }
             Event::HookBoot { .. } => tracing::info!("preload booted"),
             Event::HookReady { authorized, .. } => {
                 tracing::info!(authorized, "musickit hook attached");

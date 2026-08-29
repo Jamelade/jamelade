@@ -46,7 +46,9 @@ sidecar-check:
 	cd sidecar && npm test
 	cd sidecar && node --check main.js && node --check preload.js \
 		&& node --check page-hook.js && node --check security.js \
-		&& node --check auth-preload.js && node --check session-vault.js
+		&& node --check auth-preload.js && node --check session-vault.js \
+		&& node --check login-email.js && node --check login-email-assist.js \
+		&& node --check persistence.js
 
 # Fetch castLabs Electron. Two steps, both required: `npm install` brings down
 # the ~14 MB wrapper, and install.js fetches the ~200 MB Chromium itself.
@@ -114,7 +116,9 @@ install-sidecar: sidecar
 	install -d $(SIDECAR)
 	cp -r sidecar/package.json sidecar/main.js sidecar/preload.js \
 		sidecar/page-hook.js sidecar/security.js sidecar/auth-preload.js \
-		sidecar/session-vault.js sidecar/node_modules $(SIDECAR)/
+		sidecar/session-vault.js sidecar/login-email.js \
+		sidecar/login-email-assist.js sidecar/persistence.js \
+		sidecar/node_modules $(SIDECAR)/
 	install -d $(DATADIR)/jamelade/companions
 	cp data/companions/jambun.png data/companions/jampam.png \
 		data/companions/jamjoe.png $(DATADIR)/jamelade/companions/

@@ -21,6 +21,12 @@ OS-keyring-encrypted local vault. If a supported keyring is unavailable, the
 session is memory-only. Apple cookies and MusicKit tokens remain inside the
 browser boundary; the native process receives only bounded response data.
 
+When an Apple login is required, Jamelade can remember the last submitted Apple
+ID email and prefill it on the next HTTPS Apple login page. The address stays in
+a separate OS-keyring-encrypted, user-only file and is sent only to Apple's
+login page when used. Jamelade does not read, store, or bridge the password
+field.
+
 Artist biographies may use a separate credential-free request to Apple's
 public artist page when the authenticated API response has no biography. That
 request sends the numeric artist ID and the requester's IP address to Apple; it
@@ -62,15 +68,16 @@ in-memory lyric cache when lyric consent changes.
 ## Local data
 
 Jamelade stores preferences, bounded artwork and playlist caches, the encrypted
-Apple-cookie vault, and Chromium's downloaded Widevine component in its own XDG
-directories. Per-song lyric timing stores only numeric catalogue IDs and
-offsets. Playlist export writes a user-chosen file containing visible metadata
-and public links. It requests no broad home-directory access in the Flatpak. The
-AppImage is a native executable and therefore inherits the invoking user's
-normal filesystem permissions, although Jamelade's code continues to use only
-its documented XDG locations. Sign out removes Jamelade's saved Apple session.
-Uninstalling without deleting app data may leave local settings and caches
-behind.
+Apple-cookie vault, the separately encrypted last-login email, and Chromium's
+downloaded Widevine component in its own XDG directories. Per-song lyric timing
+stores only numeric catalogue IDs and offsets. Playlist export writes a
+user-chosen file containing visible metadata and public links. It requests no
+broad home-directory access in the Flatpak. The AppImage is a native executable
+and therefore inherits the invoking user's normal filesystem permissions,
+although Jamelade's code continues to use only its documented XDG locations.
+Sign out removes Jamelade's saved Apple session but retains the encrypted email
+for the next login. Deleting application data removes both. Uninstalling without
+deleting app data may leave local settings and caches behind.
 
 ## Issue reports
 

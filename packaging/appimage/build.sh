@@ -247,7 +247,7 @@ install -Dm755 target/release/jamelade "$appdir/usr/bin/jamelade"
 make PREFIX="$appdir/usr" dev-install
 
 sidecar="$appdir/usr/share/jamelade/sidecar"
-for source in package.json main.js preload.js page-hook.js security.js auth-preload.js session-vault.js; do
+for source in package.json main.js preload.js page-hook.js security.js auth-preload.js session-vault.js login-email.js login-email-assist.js persistence.js; do
     install -Dm644 "sidecar/$source" "$sidecar/$source"
 done
 unzip -q "$electron_archive" -d "$sidecar/node_modules/electron/dist"

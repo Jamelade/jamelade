@@ -260,6 +260,11 @@ pub enum Event {
     #[serde(rename = "storage-mode")]
     StorageMode { persistent: bool },
 
+    /// An existing encrypted cookie vault could not be decrypted after bounded
+    /// keyring retries. The sidecar preserves it and disables anonymous writes.
+    #[serde(rename = "storage-restore-failed")]
+    StorageRestoreFailed,
+
     /// The preload script executed. Proof-of-life: if this never arrives, the
     /// preload is not running at all and debugging inside it is wasted effort.
     #[serde(rename = "hook-boot")]
@@ -914,6 +919,12 @@ mod tests {
         assert_eq!(session.storefront, "gb");
         assert!(session.authorized);
         assert!(session.has_user_token);
+    }
+
+    #[test]
+    fn keyring_restore_failure_crosses_without_error_or_credential_detail() {
+        let event = serde_json::from_str::<Event>(r#"{"event":"storage-restore-failed"}"#).unwrap();
+        assert!(matches!(event, Event::StorageRestoreFailed));
     }
 
     #[test]

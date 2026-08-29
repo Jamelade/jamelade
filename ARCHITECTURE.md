@@ -66,6 +66,15 @@ playback, Chromium, and Widevine.
   renderer remains sandboxed with context isolation and no Node access.
 - `sidecar/session-vault.js` validates Apple cookies and stores only an
   encrypted, size-bounded snapshot with private filesystem permissions.
+  `sidecar/persistence.js` owns bounded keyring readiness and restore retries;
+  failure preserves the old vault with writes disabled, and only a visibly
+  completed login may supersede it.
+- `sidecar/auth-preload.js` remains empty. During an explicitly visible login,
+  `sidecar/login-email-assist.js` attaches a bounded listener only to fixed
+  email/username-like fields in validated HTTPS Apple frames. Navigation drops
+  the listener with its frame. The result is validated again and stored
+  separately through keyring encryption by `sidecar/login-email.js`; no
+  password selector or renderer IPC is added.
 - `src/private_storage.rs` provides bounded, no-follow reads and atomic
   user-only writes for library, playback, and preference data.
 - `src/lyrics.rs` parses Apple TTML as bounded streaming XML and uses a separate

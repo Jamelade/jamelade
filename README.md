@@ -141,7 +141,18 @@ library, search, queue, artwork, lyrics, and desktop integration remain native.
 The sidecar restricts navigation, permissions, downloads, and IPC. It disables
 the persistent Chromium HTTP cache, sanitizes diagnostics, and stores Apple
 cookies only in an OS-keyring-encrypted vault. Without a supported keyring, the
-session is memory-only. Optional integrations never receive Apple credentials.
+session is memory-only. Startup gives an existing vault a bounded keyring retry;
+if decryption still fails, Jamelade preserves the encrypted file and disables
+writes instead of replacing it with anonymous cookies. Optional integrations
+never receive Apple credentials.
+
+Jamelade can also remember the last Apple ID email submitted in Apple's login
+window. It is stored separately, encrypted by the same desktop keyring, and
+prefilled by a bounded main-process helper only into fixed email/username-like
+fields in a validated HTTPS Apple frame. The helper waits for a complete,
+stable address and exists only for the visible login flow. The password field
+is never queried, read or stored, and the empty auth preload receives no value
+or IPC capability.
 
 ## Privacy at a glance
 
