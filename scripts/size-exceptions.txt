@@ -6,7 +6,7 @@
 # needs to be a deliberate line in a diff.
 #
 # path                              max   why
-src/app/mod.rs                      4410  # the model, the messages, `view!` and both reducers.
+src/app/mod.rs                      4424  # the model, the messages, `view!` and both reducers.
                                           # Playlist tools, timers, credits, portals, scrobbling,
                                           # lyric variants and timing cross the root state here;
                                           # their I/O and widgets remain in focused modules.
@@ -138,11 +138,15 @@ src/app/mod.rs                      4410  # the model, the messages, `view!` and
                                           # messages/reducer arms; each renderer remains outside.
                                           # 4418 -> 4426: one shared four-second toast constructor
                                           # keeps ordinary notices transient; decisions remain dialogs.
-src/app/chrome.rs                   1080  # menus and the dialogs they open. Jamelade's companion
+                                          # 4410 -> 4424: the primary Show Jamkin item keeps one
+                                          # action handle so Preferences and right-click hiding agree.
+src/app/chrome.rs                   1101  # menus and the dialogs they open. Jamelade's companion
                                           # Credits and the opt-in connection/language rows use
                                           # native dialogs; their behavior remains elsewhere.
                                           # 1078 -> 1080: About receives the selected companion and
                                           # resolves its existing local icon name; no new I/O lives here.
+                                          # 1080 -> 1101: one stateful Show Jamkin action supplies the
+                                          # menu checkmark and forwards changes to the root reducer.
                                           # 947 -> 948: the theme row reads its ordered labels from
                                           # the split settings/theme.rs model instead of a literal.
                                           # preference includes a local image preview and updates its
@@ -192,10 +196,12 @@ src/discord.rs                       699  # one optional local Discord IPC bound
                                           # Unix socket. The worker still retains only the newest track.
                                           # 660 -> 699: a socket-pair regression test drops the first
                                           # peer and proves the unchanged activity reaches a replacement.
-src/components/jamkin_mode.rs        761  # the two compositor-specific Jamkin surfaces and shared
+src/components/jamkin_mode.rs        779  # the two compositor-specific Jamkin surfaces and shared
                                           # hover-lyrics state. A small typed configuration threads
                                           # companion, quality and placement to both surfaces without
                                           # growing already callback-heavy constructors.
+                                          # 761 -> 779: each active surface owns one bounded Hide
+                                          # Jamkin context menu, sharing the existing disable callback.
                                           # 619 -> 679: Edge Walk adds interaction gates and lifecycle
                                           # wiring here; its timer, animation and geometry are split into
                                           # the under-budget `jamkin_mode/oled.rs` child module.

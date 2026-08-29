@@ -336,6 +336,8 @@ pub struct AppModel {
     /// The sort popover's two actions, kept so the menu can be re-pointed at
     /// another section's choice when the view changes.
     sort_actions: Option<(gtk::gio::SimpleAction, gtk::gio::SimpleAction)>,
+    /// Check state for the primary menu's Show Jamkin action.
+    jamkin_action: Option<gtk::gio::SimpleAction>,
     /// The user's library albums and artists, loaded on first visit rather than
     /// at startup — launching should not wait on three collections.
     albums: Vec<Album>,
@@ -1858,6 +1860,7 @@ impl Component for AppModel {
                 },
             },
             sort_actions: None,
+            jamkin_action: None,
             albums: Vec::new(),
             artists: Vec::new(),
             playlists: Vec::new(),
@@ -1933,6 +1936,10 @@ impl Component for AppModel {
                 Some(crate::i18n::tr("_Preferences")),
                 Some("win.preferences"),
             );
+            preferences.append(
+                Some(crate::i18n::tr("_Show Jamkin")),
+                Some("win.show-jamkin"),
+            );
             primary_menu.append_section(None, &preferences);
 
             let library = gtk::gio::Menu::new();
@@ -2007,7 +2014,11 @@ impl Component for AppModel {
             model.player_view.sender(),
         );
 
-        register_actions(&root, &sender);
+        model.jamkin_action = Some(register_actions(
+            &root,
+            &sender,
+            model.settings.desktop_jamkin,
+        ));
 
         // Rows read playability from here, so seed it before any are built.
         *model.dead_rows.borrow_mut() = model.dead_ids.clone();
@@ -3108,6 +3119,9 @@ impl AppModel {
                 });
             }
             AppMsg::SetDesktopJamkin(enabled) => {
+                if let Some(action) = &self.jamkin_action {
+                    action.set_state(&enabled.to_variant());
+                }
                 if self.settings.desktop_jamkin == enabled {
                     return;
                 }

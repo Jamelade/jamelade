@@ -70,6 +70,13 @@ pub(super) fn sort_keys_menu(view: super::View) -> gtk::gio::Menu {
 // state changes.
 relm4::new_action_group!(AppMenuActionGroup, "win");
 relm4::new_stateless_action!(PreferencesAction, AppMenuActionGroup, "preferences");
+relm4::new_stateful_action!(
+    ShowJamkinAction,
+    AppMenuActionGroup,
+    "show-jamkin",
+    (),
+    bool
+);
 relm4::new_stateless_action!(NewPlaylistAction, AppMenuActionGroup, "new-playlist");
 relm4::new_stateless_action!(ShortcutsAction, AppMenuActionGroup, "shortcuts");
 relm4::new_stateless_action!(AboutAction, AppMenuActionGroup, "about");
@@ -89,10 +96,23 @@ relm4::new_stateless_action!(SupportAction, AppMenuActionGroup, "support");
 pub(super) fn register_actions(
     window: &adw::ApplicationWindow,
     sender: &ComponentSender<AppModel>,
-) {
+    desktop_jamkin: bool,
+) -> gtk::gio::SimpleAction {
     use relm4::actions::{AccelsPlus, RelmAction, RelmActionGroup};
 
     let mut group = RelmActionGroup::<AppMenuActionGroup>::new();
+
+    // A stateful window action makes “Show Jamkin” a real checkable menu item.
+    // The reducer also synchronizes it when Preferences or the Jamkin's own
+    // right-click menu changes the same setting.
+    let s = sender.clone();
+    let jamkin =
+        RelmAction::<ShowJamkinAction>::new_stateful(&desktop_jamkin, move |_, enabled| {
+            *enabled = !*enabled;
+            s.input(AppMsg::SetDesktopJamkin(*enabled));
+        });
+    let jamkin_action = jamkin.gio_action().clone();
+    group.add_action(jamkin);
 
     let s = sender.clone();
     group.add_action(RelmAction::<PreferencesAction>::new_stateless(move |_| {
@@ -194,6 +214,7 @@ pub(super) fn register_actions(
     app.set_accelerators_for_action::<FocusSearchAction>(&["<Control>f"]);
 
     group.register_for_widget(window);
+    jamkin_action
 }
 
 /// Check an icon name against the theme, falling back if it is missing.

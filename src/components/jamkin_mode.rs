@@ -77,6 +77,8 @@ struct JamkinSurface {
     window: gtk::Window,
     actor: JamkinActor,
     popover: gtk::Popover,
+    context_popover: gtk::PopoverMenu,
+    context_model: gtk::gio::Menu,
     current_line: gtk::Label,
     next_line: gtk::Label,
     placement: Placement,
@@ -145,6 +147,36 @@ impl JamkinSurface {
 
         let interaction = Rc::new(InteractionState::default());
         hover::install(actor.widget(), &popover, interaction.clone());
+
+        let context_model = gtk::gio::Menu::new();
+        context_model.append(
+            Some(&crate::i18n::hide_jamkin(config.companion.label())),
+            Some("jamkin.hide"),
+        );
+        let context_popover = gtk::PopoverMenu::from_model(Some(&context_model));
+        context_popover.set_has_arrow(false);
+        context_popover.set_halign(gtk::Align::Start);
+        context_popover.set_parent(actor.widget());
+
+        let actions = gtk::gio::SimpleActionGroup::new();
+        let hide = gtk::gio::SimpleAction::new("hide", None);
+        let disable_from_menu = disable.clone();
+        hide.connect_activate(move |_, _| disable_from_menu());
+        actions.add_action(&hide);
+        context_popover.insert_action_group("jamkin", Some(&actions));
+
+        let context_click = gtk::GestureClick::new();
+        context_click.set_button(gtk::gdk::BUTTON_SECONDARY);
+        {
+            let context_popover = context_popover.clone();
+            context_click.connect_pressed(move |gesture, _, x, y| {
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                context_popover
+                    .set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+                context_popover.popup();
+            });
+        }
+        actor.widget().add_controller(context_click);
 
         let dragged = Rc::new(Cell::new(false));
         let click = gtk::GestureClick::new();
@@ -217,6 +249,8 @@ impl JamkinSurface {
             window,
             actor,
             popover,
+            context_popover,
+            context_model,
             current_line,
             next_line,
             placement,
@@ -228,6 +262,7 @@ impl JamkinSurface {
     fn set_visible(&self, visible: bool) {
         if !visible {
             self.popover.popdown();
+            self.context_popover.popdown();
         }
         // Mapping this helper never asks for focus; it must not steal the
         // keyboard from the application somebody is actually using.
@@ -236,6 +271,11 @@ impl JamkinSurface {
 
     fn set_companion(&self, companion: Companion) {
         self.actor.set_companion(companion);
+        self.context_model.remove(0);
+        self.context_model.append(
+            Some(&crate::i18n::hide_jamkin(companion.label())),
+            Some("jamkin.hide"),
+        );
         self.window
             .set_title(Some(&format!("{} — Jamelade", companion.label())));
     }
@@ -279,6 +319,7 @@ impl Drop for JamkinSurface {
         // A manually parented popover must be detached before its anchor goes
         // away, or GTK reports a leaked child.
         self.popover.unparent();
+        self.context_popover.unparent();
     }
 }
 

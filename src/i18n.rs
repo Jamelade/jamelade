@@ -190,6 +190,7 @@ pub fn tr(english: &'static str) -> &'static str {
         "No matches" => "Keine Treffer",
         "New Playlist" => "Neue Playlist",
         "_Preferences" => "_Einstellungen",
+        "_Show Jamkin" => "_Jamkin anzeigen",
         "_New Playlist…" => "_Neue Playlist…",
         "_Buy Slipmat Creator a Coffee" => "_Slipmat-Entwickler einen Kaffee ausgeben",
         "_Keyboard Shortcuts" => "_Tastenkürzel",
@@ -200,6 +201,14 @@ pub fn tr(english: &'static str) -> &'static str {
         "Sort" => "Sortieren",
         "What to search for" => "Suchkategorie",
         _ => english,
+    }
+}
+
+pub fn hide_jamkin(name: &str) -> String {
+    if ACTIVE.load(Ordering::Relaxed) == GERMAN {
+        format!("{name} ausblenden")
+    } else {
+        format!("Hide {name}")
     }
 }
 

@@ -81,15 +81,18 @@ The Desktop Jamkin dances during playback, keeps lyrics visible while hovered,
 and remembers its position and size. Controls cover opacity, reduced motion,
 quality, persistence, always-on-top behavior on compatible Wayland desktops,
 and **Edge Walk**, which periodically moves it around screen edges for OLED
-care. Fresh installs start with JamBun at 175 px; saved preferences always win
-on later launches. Jamkin features are local and account-free.
+care. Right-clicking the active companion hides it by name; the main app menu's
+**Show Jamkin** toggle restores it without changing its identity or position.
+Fresh installs start with JamBun at 175 px; saved preferences always win on
+later launches. Jamkin features are local and account-free.
 
 ### Album-aware glass
 
 The main window can derive its palette from the current cover art. Blur and
 transparency are adjustable, while the selected Jamkin provides a consistent
-accent palette. The compact and expanded players keep the selected theme as
-stable, readable surfaces. Playlist artwork that Apple does not supply is
+accent palette. Blossom, Tidepool, and Vermilion use richer named-theme
+surfaces. The compact and expanded players keep the selected theme as stable,
+readable surfaces. Playlist artwork that Apple does not supply is
 composed locally from the playlist's album covers. Jamelade uses SF Pro Display
 when it is already installed and otherwise falls back to the desktop's normal
 sans-serif font. It does not bundle Apple's font.

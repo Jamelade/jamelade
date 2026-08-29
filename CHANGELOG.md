@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Increased the colour presence of the Blossom, Tidepool, and Vermilion named
+  themes while retaining their existing light-surface contrast.
+- Added `Hide JamBun`, `Hide JamPam`, or `Hide JamJoe` to the active Desktop
+  Jamkin's right-click menu, plus a synchronized `Show Jamkin` toggle in the
+  primary app menu. Hiding preserves the selected companion and placement.
 - Added bounded keyring-readiness and cookie-vault restore retries. A failed
   restore now preserves the encrypted session and disables anonymous-cookie
   writes until an explicit Apple login supersedes it.
