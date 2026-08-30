@@ -203,7 +203,7 @@ launcher entry, and has no network access. Remove it with
 ## Install
 
 Jamelade release packages are available on the
-[releases page](https://github.com/Jamelade/jamelade/releases). **Flatpak is
+[releases page](https://github.com/RizziU/jamelade/releases). **Flatpak is
 recommended** because it adds an outer application sandbox:
 
 ```bash

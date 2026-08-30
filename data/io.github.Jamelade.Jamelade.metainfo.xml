@@ -32,8 +32,8 @@
   <developer id="io.github.jamelade">
     <name>Jamelade contributors</name>
   </developer>
-  <url type="homepage">https://github.com/Jamelade/jamelade</url>
-  <url type="bugtracker">https://github.com/Jamelade/jamelade/issues</url>
+  <url type="homepage">https://github.com/RizziU/jamelade</url>
+  <url type="bugtracker">https://github.com/RizziU/jamelade/issues</url>
   <content_rating type="oars-1.1"/>
   <supports>
     <control>pointing</control>

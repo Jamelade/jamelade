@@ -272,8 +272,8 @@ pub(super) fn show_about(parent: &adw::ApplicationWindow, companion: Companion) 
         .developer_name("Miguel Rincon and Jamelade contributors")
         .version(env!("CARGO_PKG_VERSION"))
         .license_type(gtk::License::Gpl30)
-        .website("https://github.com/Jamelade/jamelade")
-        .issue_url("https://github.com/Jamelade/jamelade/issues")
+        .website("https://github.com/RizziU/jamelade")
+        .issue_url("https://github.com/RizziU/jamelade/issues")
         // The primary menu carries this too. Both, because the menu is where
         // it is *seen* and About is where somebody goes looking for it.
         .support_url(SUPPORT_URL)

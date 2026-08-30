@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Moved the canonical GitHub repository to `RizziU/jamelade` while retaining
+  the stable `io.github.Jamelade.Jamelade` application identity so existing
+  installs keep their settings, encrypted session, and update continuity.
+
 ## 3.0.0 — 2026-08-30
 
 - Added a compact 0.5×–2× playback-speed slider in 0.1× steps behind the
