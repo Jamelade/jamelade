@@ -30,6 +30,7 @@ pub struct PlayerState {
     pub position_ms: u64,
     pub duration_ms: u64,
     pub volume: f64,
+    pub playback_rate: f64,
     pub shuffle: bool,
     pub repeat: RepeatMode,
     /// When `position_ms` was last set, so the UI can interpolate between the
@@ -41,6 +42,7 @@ impl PlayerState {
     pub fn new() -> Self {
         Self {
             volume: 1.0,
+            playback_rate: crate::playback_rate::DEFAULT,
             ..Default::default()
         }
     }
@@ -83,6 +85,15 @@ impl PlayerState {
                 self.shuffle = *shuffle;
                 self.repeat = *repeat;
                 true
+            }
+            Event::PlaybackRate { rate } => {
+                // Rebase at the old rate before adopting the new one. Merely
+                // swapping the multiplier would apply the new speed
+                // retroactively to the whole interval since the last tick.
+                self.position_ms = self.interpolated_position_ms();
+                self.playback_rate = *rate;
+                self.last_tick = self.state.is_playing().then(Instant::now);
+                false
             }
             Event::Queue(queue) => {
                 self.apply_queue(queue);
@@ -151,10 +162,11 @@ impl PlayerState {
         if !self.state.is_playing() {
             return base;
         }
-        let drift = self
+        let elapsed = self
             .last_tick
             .map(|t| t.elapsed().as_millis() as u64)
             .unwrap_or(0);
+        let drift = (elapsed as f64 * self.playback_rate).round() as u64;
         let pos = base.saturating_add(drift);
         if self.duration_ms > 0 {
             pos.min(self.duration_ms)

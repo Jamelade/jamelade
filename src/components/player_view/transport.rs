@@ -128,6 +128,7 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
         .icon_name("alarm-symbolic")
         .tooltip_text("Sleep timer")
         .css_classes(["flat", "circular"])
+        .width_request(44)
         .build();
     sleep_timer.add_css_class("player-state-control");
     let sleep_box = gtk::Box::builder()
@@ -154,6 +155,71 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
         sleep_box.append(&choice_button);
     }
     sleep_timer.set_popover(Some(&sleep_popover));
+
+    // The speed control replaces the old empty balance cell. Clicking the
+    // compact rate opens one stepped slider rather than a long choice menu.
+    let playback_rate_label = gtk::Label::builder()
+        .label(crate::playback_rate::label(crate::playback_rate::DEFAULT))
+        .css_classes(["caption"])
+        .build();
+    let playback_rate = gtk::MenuButton::builder()
+        .child(&playback_rate_label)
+        .tooltip_text("Playback speed")
+        .css_classes(["flat", "circular"])
+        .width_request(44)
+        .build();
+    playback_rate.add_css_class("player-state-control");
+    let rate_box = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(6)
+        .margin_top(10)
+        .margin_bottom(10)
+        .margin_start(10)
+        .margin_end(10)
+        .build();
+    rate_box.append(
+        &gtk::Label::builder()
+            .label("Playback Speed")
+            .xalign(0.0)
+            .css_classes(["heading"])
+            .build(),
+    );
+    let playback_rate_scale = gtk::Scale::with_range(
+        gtk::Orientation::Horizontal,
+        crate::playback_rate::MIN,
+        crate::playback_rate::MAX,
+        crate::playback_rate::STEP,
+    );
+    playback_rate_scale.set_value(crate::playback_rate::DEFAULT);
+    playback_rate_scale.set_digits(1);
+    playback_rate_scale.set_draw_value(false);
+    playback_rate_scale.set_hexpand(true);
+    playback_rate_scale.set_width_request(180);
+    playback_rate_scale.set_tooltip_text(Some("0.5× to 2× in 0.1× steps"));
+    let playback_rate_value = gtk::Label::builder()
+        .label(crate::playback_rate::label(crate::playback_rate::DEFAULT))
+        .width_chars(4)
+        .xalign(1.0)
+        .css_classes(["numeric"])
+        .build();
+    let playback_rate_handler = {
+        let sender = sender.clone();
+        let value = playback_rate_value.clone();
+        playback_rate_scale.connect_value_changed(move |scale| {
+            let rate = crate::playback_rate::from_slider(scale.value());
+            value.set_label(&crate::playback_rate::label(rate));
+            sender.input(PlayerViewInput::SetPlaybackRate(rate));
+        })
+    };
+    let rate_slider = gtk::Box::builder()
+        .orientation(gtk::Orientation::Horizontal)
+        .spacing(8)
+        .build();
+    rate_slider.append(&playback_rate_scale);
+    rate_slider.append(&playback_rate_value);
+    rate_box.append(&rate_slider);
+    let rate_popover = gtk::Popover::builder().child(&rate_box).build();
+    playback_rate.set_popover(Some(&rate_popover));
 
     // **Volume lives here now.** The bar drops its own below the narrow
     // breakpoint, and shuffle and repeat were already down here to fall back
@@ -216,10 +282,8 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
         widget.connect_clicked(move |_| sender.input(msg.clone()));
     }
 
-    // Sleep belongs with playback modes, next to shuffle. A same-width empty
-    // cell on the far side keeps Play geometrically centred without putting a
-    // second timer control on screen.
-    let sleep_balance = gtk::Box::builder().width_request(34).build();
+    // Sleep belongs with playback modes, next to shuffle. Playback speed takes
+    // the same-width far-right cell, keeping Play geometrically centred.
     for w in [
         sleep_timer.upcast_ref::<gtk::Widget>(),
         shuffle.upcast_ref::<gtk::Widget>(),
@@ -227,7 +291,7 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
         play.upcast_ref(),
         next.upcast_ref(),
         repeat.upcast_ref(),
-        sleep_balance.upcast_ref(),
+        playback_rate.upcast_ref(),
     ] {
         buttons.append(w);
     }
@@ -265,6 +329,11 @@ pub(super) fn build_transport(into: &gtk::Box, sender: &ComponentSender<PlayerVi
         copy_link,
         favorite,
         sleep_timer,
+        playback_rate,
+        playback_rate_label,
+        playback_rate_value,
+        playback_rate_scale,
+        playback_rate_handler,
         shown_loop: std::cell::Cell::new(LoopMarks::Off),
     }
 }
@@ -287,6 +356,11 @@ pub(super) struct Bits {
     copy_link: gtk::Button,
     favorite: gtk::Button,
     sleep_timer: gtk::MenuButton,
+    playback_rate: gtk::MenuButton,
+    playback_rate_label: gtk::Label,
+    playback_rate_value: gtk::Label,
+    playback_rate_scale: gtk::Scale,
+    playback_rate_handler: relm4::gtk::glib::SignalHandlerId,
     shown_loop: std::cell::Cell<LoopMarks>,
 }
 
@@ -330,6 +404,26 @@ impl PlayerView {
         bits.copy_link.set_sensitive(self.snap.catalog_id.is_some());
         bits.favorite.set_sensitive(self.snap.catalog_id.is_some());
         bits.sleep_timer.set_sensitive(self.snap.active);
+        bits.playback_rate.set_sensitive(self.snap.active);
+        bits.playback_rate_label
+            .set_label(&crate::playback_rate::label(self.snap.playback_rate));
+        bits.playback_rate_value
+            .set_label(&crate::playback_rate::label(self.snap.playback_rate));
+        if (bits.playback_rate_scale.value() - self.snap.playback_rate).abs() > 0.000_001 {
+            bits.playback_rate_scale
+                .block_signal(&bits.playback_rate_handler);
+            bits.playback_rate_scale.set_value(self.snap.playback_rate);
+            bits.playback_rate_scale
+                .unblock_signal(&bits.playback_rate_handler);
+        }
+        set_control_active(
+            &bits.playback_rate,
+            (self.snap.playback_rate - crate::playback_rate::DEFAULT).abs() > 0.000_001,
+        );
+        bits.playback_rate.set_tooltip_text(Some(&format!(
+            "Playback speed: {}",
+            crate::playback_rate::label(self.snap.playback_rate)
+        )));
         set_control_active(&bits.queue, self.snap.queue_open);
         set_control_active(&bits.lyrics, self.snap.lyrics_open);
         set_control_active(&bits.favorite, self.snap.favorite);

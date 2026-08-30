@@ -181,6 +181,7 @@ impl AppModel {
             // Ours, not the sidecar's: MusicKit is told the volume and does not
             // report one back, so `self.volume` is the only record of it.
             volume: self.volume,
+            playback_rate: self.player.playback_rate,
             title: item.map(|i| i.title.clone()).unwrap_or_default(),
             artist: item.map(|i| i.artist.clone()).unwrap_or_default(),
             album: item.map(|i| i.album.clone()).unwrap_or_default(),

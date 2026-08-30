@@ -296,6 +296,7 @@ mod tests {
                 mosaic_artwork: Vec::new(),
                 share_url: None,
                 library: true,
+                can_edit: true,
             }],
         };
         let back = parse(&write(&saved));
@@ -379,6 +380,7 @@ mod tests {
             mosaic_artwork: Vec::new(),
             share_url: None,
             library: true,
+            can_edit: true,
         };
         playlist.mosaic_artwork = vec![
             Artwork::new("https://is1.mzstatic.com/a/{w}x{h}bb.jpg");

@@ -105,7 +105,7 @@ impl AppModel {
         let sidebar = sender.clone();
         let page = DetailPage::new(
             id,
-            kind.heading(),
+            kind.clone(),
             RowState {
                 overrides: self.row_overrides.clone(),
                 current: self.current_track.clone(),
@@ -231,6 +231,65 @@ impl AppModel {
                         .map_err(|err| format!("{err:#}")),
                 }
             }),
+        }
+    }
+
+    /// Re-read any open detail page for the playlist Apple just accepted a
+    /// write to. The response body is intentionally not trusted as final
+    /// state; fetching the exact resource also avoids making every open page
+    /// flash after an unrelated playlist changes.
+    pub(super) fn refresh_library_playlist_pages(
+        &self,
+        playlist_id: &str,
+        expected_catalog_id: &str,
+        sender: &ComponentSender<Self>,
+    ) {
+        let Some(client) = self.client() else {
+            return;
+        };
+        let page_ids: Vec<u64> = self
+            .pages
+            .iter()
+            .filter_map(|page| match page.kind() {
+                PageKind::LibraryPlaylist(id) if id == playlist_id => Some(page.id),
+                _ => None,
+            })
+            .collect();
+        let generation = self.account_generation;
+
+        for page in page_ids {
+            let client = client.clone();
+            let playlist_id = playlist_id.to_owned();
+            let expected_catalog_id = expected_catalog_id.to_owned();
+            sender.oneshot_command(async move {
+                // Apple documents the append as 202 Accepted: the write can be
+                // acknowledged before a read sees it. Retry only this bounded,
+                // idempotent GET, and stop as soon as the expected song appears.
+                let mut latest = client.library_playlist(&playlist_id).await;
+                for delay_ms in [650, 1_500] {
+                    if latest.as_ref().is_ok_and(|(_, tracks)| {
+                        tracks.iter().any(|track| {
+                            track.catalog_id.as_deref() == Some(expected_catalog_id.as_str())
+                        })
+                    }) {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                    latest = client.library_playlist(&playlist_id).await;
+                    if latest.as_ref().is_ok_and(|(_, tracks)| {
+                        tracks.iter().any(|track| {
+                            track.catalog_id.as_deref() == Some(expected_catalog_id.as_str())
+                        })
+                    }) {
+                        break;
+                    }
+                }
+                CommandMsg::PlaylistPage {
+                    generation,
+                    page,
+                    result: latest.map_err(|err| format!("{err:#}")),
+                }
+            });
         }
     }
 

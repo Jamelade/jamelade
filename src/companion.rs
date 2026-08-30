@@ -103,7 +103,10 @@ impl Companion {
                 secondary: "#b61f55",
             },
             Self::JamJoe => Palette {
-                accent: "#a65a14",
+                // Drawn from the saturated orange in his headphones rather
+                // than the old muted brown, while retaining AA contrast both
+                // as text on a light surface and behind white control glyphs.
+                accent: "#b95710",
                 foreground: "#ffffff",
                 secondary: "#b51f52",
             },
@@ -289,7 +292,7 @@ mod tests {
             .map(|companion| companion.palette().accent)
             .collect();
         assert_eq!(accents.len(), Companion::ALL.len());
-        assert_eq!(Companion::JamJoe.palette().accent, "#a65a14");
+        assert_eq!(Companion::JamJoe.palette().accent, "#b95710");
     }
 
     #[test]

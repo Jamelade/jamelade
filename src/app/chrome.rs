@@ -586,10 +586,13 @@ impl AppModel {
     ) {
         let dialog = adw::PreferencesDialog::new();
         let page = adw::PreferencesPage::new();
+        dialog.add_css_class("jamelade-preferences");
+        page.add_css_class("jamelade-preferences-page");
 
         let appearance = adw::PreferencesGroup::builder()
             .title(crate::i18n::tr("Appearance"))
             .build();
+        appearance.add_css_class("preferences-surface-group");
         let language_names: Vec<&str> = crate::i18n::Language::ALL
             .iter()
             .map(|language| language.label())
@@ -606,6 +609,7 @@ impl AppModel {
                 sender.input(AppMsg::SetLanguage(row.selected()));
             });
         }
+        language.add_css_class("preferences-value-row");
         appearance.add(&language);
         let theme_names: Vec<&str> = Theme::ALL.iter().map(|theme| theme.label()).collect();
         let theme = adw::ComboRow::builder()
@@ -619,6 +623,7 @@ impl AppModel {
                 sender.input(AppMsg::SetTheme(row.selected()));
             });
         }
+        theme.add_css_class("preferences-value-row");
         appearance.add(&theme);
 
         let names: Vec<&str> = Accent::ALL.iter().map(|a| a.label()).collect();
@@ -633,6 +638,7 @@ impl AppModel {
                 sender.input(AppMsg::SetAccent(Accent::from_index(row.selected())));
             });
         }
+        accent.add_css_class("preferences-value-row");
         appearance.add(&accent);
 
         // One switch for both parts of album-aware glass: the cover and its
@@ -649,6 +655,7 @@ impl AppModel {
                 sender.input(AppMsg::SetPlayerBackdrop(row.is_active()));
             });
         }
+        backdrop.add_css_class("preferences-toggle-row");
         appearance.add(&backdrop);
 
         let glass_row = adw::ActionRow::builder()
@@ -673,6 +680,7 @@ impl AppModel {
             });
         }
         glass_row.add_suffix(&glass);
+        glass_row.add_css_class("preferences-slider-row");
         appearance.add(&glass_row);
 
         let lyric_colour_row = adw::ActionRow::builder()
@@ -695,6 +703,7 @@ impl AppModel {
             });
         }
         lyric_colour_row.add_suffix(&lyric_colour);
+        lyric_colour_row.add_css_class("preferences-slider-row");
         appearance.add(&lyric_colour_row);
 
         let lyric_size_row = adw::ActionRow::builder()
@@ -722,12 +731,33 @@ impl AppModel {
             });
         }
         lyric_size_row.add_suffix(&lyric_size);
+        lyric_size_row.add_css_class("preferences-slider-row");
         appearance.add(&lyric_size_row);
+
+        let search = adw::PreferencesGroup::builder()
+            .title(crate::i18n::tr("Search"))
+            .description("Recent queries stay only on this device")
+            .build();
+        search.add_css_class("preferences-surface-group");
+        let remember_searches = adw::SwitchRow::builder()
+            .title(crate::i18n::tr("Remember Search History"))
+            .subtitle("Turning this off stops recording but does not delete existing searches")
+            .active(self.settings.search_history_enabled)
+            .build();
+        {
+            let sender = sender.clone();
+            remember_searches.connect_active_notify(move |row| {
+                sender.input(AppMsg::SetSearchHistoryEnabled(row.is_active()));
+            });
+        }
+        remember_searches.add_css_class("preferences-toggle-row");
+        search.add(&remember_searches);
 
         let jamkin = adw::PreferencesGroup::builder()
             .title(crate::i18n::tr("Jamkin Companion"))
             .description("Appears beside lyrics; Match Jamkin also follows its palette")
             .build();
+        jamkin.add_css_class("preferences-surface-group");
         let companion_names: Vec<&str> = Companion::ALL.iter().map(|c| c.label()).collect();
         let companion = adw::ComboRow::builder()
             .title(crate::i18n::tr("Companion"))
@@ -756,6 +786,7 @@ impl AppModel {
                 sender.input(AppMsg::SetCompanion(selected));
             });
         }
+        companion.add_css_class("preferences-value-row");
         jamkin.add(&companion);
 
         let quality = adw::ComboRow::builder()
@@ -776,6 +807,7 @@ impl AppModel {
                 sender.input(AppMsg::SetJamkinQuality(selected));
             });
         }
+        quality.add_css_class("preferences-value-row");
         jamkin.add(&quality);
 
         let reduced_motion = adw::SwitchRow::builder()
@@ -789,6 +821,7 @@ impl AppModel {
                 sender.input(AppMsg::SetJamkinReducedMotion(row.is_active()));
             });
         }
+        reduced_motion.add_css_class("preferences-toggle-row");
         jamkin.add(&reduced_motion);
 
         let launcher_preview = gtk::Picture::builder()
@@ -819,6 +852,7 @@ impl AppModel {
                 sender.input(AppMsg::SetLauncherIcon(selected));
             });
         }
+        launcher_icon.add_css_class("preferences-value-row");
         jamkin.add(&launcher_icon);
         let desktop_jamkin = adw::SwitchRow::builder()
             .title(crate::i18n::tr("Desktop Jamkin"))
@@ -831,6 +865,7 @@ impl AppModel {
                 sender.input(AppMsg::SetDesktopJamkin(row.is_active()));
             });
         }
+        desktop_jamkin.add_css_class("preferences-toggle-row");
         jamkin.add(&desktop_jamkin);
 
         let stay_visible = adw::SwitchRow::builder()
@@ -844,6 +879,7 @@ impl AppModel {
                 sender.input(AppMsg::SetDesktopJamkinStayVisible(row.is_active()));
             });
         }
+        stay_visible.add_css_class("preferences-toggle-row");
         jamkin.add(&stay_visible);
 
         let size_row = adw::ActionRow::builder()
@@ -871,6 +907,7 @@ impl AppModel {
             });
         }
         size_row.add_suffix(&size);
+        size_row.add_css_class("preferences-slider-row");
         jamkin.add(&size_row);
 
         let opacity_row = adw::ActionRow::builder()
@@ -898,6 +935,7 @@ impl AppModel {
             });
         }
         opacity_row.add_suffix(&opacity);
+        opacity_row.add_css_class("preferences-slider-row");
         jamkin.add(&opacity_row);
 
         let above_supported = JamkinMode::keep_above_supported();
@@ -914,6 +952,7 @@ impl AppModel {
             )
             .sensitive(above_supported)
             .build();
+        keep_above.add_css_class("preferences-toggle-row");
         jamkin.add(&keep_above);
 
         let edge_walk = adw::SwitchRow::builder()
@@ -946,6 +985,7 @@ impl AppModel {
                 sender.input(AppMsg::SetDesktopJamkinOledCare(row.is_active()));
             });
         }
+        edge_walk.add_css_class("preferences-toggle-row");
         jamkin.add(&edge_walk);
 
         // No group description. It carried a caveat about notifications needing
@@ -956,6 +996,7 @@ impl AppModel {
         let notifications = adw::PreferencesGroup::builder()
             .title(crate::i18n::tr("Notifications"))
             .build();
+        notifications.add_css_class("preferences-surface-group");
         let notify = adw::SwitchRow::builder()
             .title(crate::i18n::tr("Notify on track change"))
             .subtitle("When a new song starts and Jamelade is not in focus")
@@ -967,12 +1008,14 @@ impl AppModel {
                 sender.input(AppMsg::SetNotifyTrackChange(row.is_active()));
             });
         }
+        notify.add_css_class("preferences-toggle-row");
         notifications.add(&notify);
 
         let connections = adw::PreferencesGroup::builder()
             .title(crate::i18n::tr("Connections"))
             .description("Connections are optional and off by default")
             .build();
+        connections.add_css_class("preferences-surface-group");
         let discord_available = crate::discord::Presence::available();
         let discord = adw::SwitchRow::builder()
             .title(crate::i18n::tr("Discord Activity"))
@@ -990,6 +1033,7 @@ impl AppModel {
                 sender.input(AppMsg::SetDiscordActivity(row.is_active()));
             });
         }
+        discord.add_css_class("preferences-toggle-row");
         connections.add(&discord);
 
         let shortcuts = adw::SwitchRow::builder()
@@ -1009,6 +1053,7 @@ impl AppModel {
                 });
             });
         }
+        shortcuts.add_css_class("preferences-toggle-row");
         connections.add(&shortcuts);
 
         let listenbrainz = adw::ActionRow::builder()
@@ -1048,6 +1093,7 @@ impl AppModel {
                 "Apple Music is tried first through your existing session. Third-party fallbacks are separately opt-in, contacted one at a time, and also see your IP address.",
             )
             .build();
+        privacy.add_css_class("preferences-surface-group");
         let apple_lyrics = adw::ActionRow::builder()
             .title(crate::i18n::tr("Lyrics from Apple Music"))
             .subtitle(
@@ -1074,6 +1120,7 @@ impl AppModel {
                 sender.input(AppMsg::SetLyricsEnabled(row.is_active()));
             });
         }
+        lyrics.add_css_class("preferences-toggle-row");
         privacy.add(&lyrics);
         let lyrics_ovh = adw::SwitchRow::builder()
             .title(crate::i18n::tr("Fallback lyrics from Lyrics.ovh"))
@@ -1088,9 +1135,11 @@ impl AppModel {
                 sender.input(AppMsg::SetLyricsOvhEnabled(row.is_active()));
             });
         }
+        lyrics_ovh.add_css_class("preferences-toggle-row");
         privacy.add(&lyrics_ovh);
 
         page.add(&appearance);
+        page.add(&search);
         page.add(&jamkin);
         page.add(&notifications);
         page.add(&connections);

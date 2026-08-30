@@ -27,6 +27,8 @@ function harness() {
     playbackState: 3,
     queue: { items: [], position: 0 },
     volume: 1,
+    playbackRate: 1,
+    defaultPlaybackRate: 1,
     shuffleMode: 0,
     repeatMode: 0,
     addEventListener(name, callback) {
@@ -42,7 +44,9 @@ function harness() {
       },
       async post(path, body) {
         apiRequests.push({ method: 'post', path, ...(body === undefined ? {} : { body }) })
-        return { status: 202, data: null }
+        // MusicKit's real empty-write shape. The broker must normalize its
+        // undefined payload into a string body before security validation.
+        return { status: 202, data: undefined }
       },
     },
   }
@@ -204,6 +208,31 @@ test('playlist writes are typed, bounded, and remain on documented Apple routes'
   assert.equal(
     app.events.find((event) => event.event === 'api-response' && event.requestId === 22).status,
     400,
+  )
+  assert.equal(
+    app.events.find((event) => event.event === 'api-response' && event.requestId === 21).body,
+    'null',
+  )
+})
+
+test('playback speed is bounded, mirrored, and carried to the next track', async () => {
+  const app = harness()
+  app.send({ cmd: 'setPlaybackRate', rate: 1.7 })
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.equal(app.music.playbackRate, 1.7)
+  assert.equal(app.music.defaultPlaybackRate, 1.7)
+  assert.deepEqual(
+    app.events.filter((event) => event.event === 'playback-rate').at(-1),
+    { event: 'playback-rate', rate: 1.7 },
+  )
+
+  app.send({ cmd: 'setPlaybackRate', rate: 9 })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(app.music.playbackRate, 1.7)
+  assert.equal(
+    app.events.filter((event) => event.event === 'error').at(-1).code,
+    'command-failed',
   )
 })
 

@@ -40,7 +40,6 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use relm4::RelmWidgetExt;
 use relm4::gtk::prelude::*;
 use relm4::typed_view::grid::RelmGridItem;
 use relm4::{gtk, view};
@@ -294,9 +293,13 @@ impl RelmGridItem for GridItem {
         view! {
             root = gtk::Box {
                 set_orientation: gtk::Orientation::Vertical,
-                set_spacing: 6,
-                set_margin_all: 6,
+                set_spacing: 7,
+                set_margin_top: 7,
+                set_margin_bottom: 7,
+                set_margin_start: 6,
+                set_margin_end: 6,
                 set_width_request: TILE_PX,
+                add_css_class: "media-tile",
 
                 // `halign: Fill` — the default — is load-bearing, and centring
                 // is done with `xalign` instead. A centred label is allocated
@@ -537,6 +540,7 @@ mod tests {
             mosaic_artwork: Vec::new(),
             share_url: None,
             library: true,
+            can_edit: true,
         };
         let before = playlist_art_key(&playlist("before"));
         let after = playlist_art_key(&playlist("after"));

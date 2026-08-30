@@ -82,6 +82,9 @@ pub struct Snapshot {
     /// 0.0–1.0. The volume button follows this rather than owning it, so a
     /// change from the keyboard or from MPRIS moves the widget too.
     pub volume: f64,
+    /// MusicKit's mirrored playback rate. The compact bar uses it only for
+    /// clock interpolation; the expanded player owns the speed menu.
+    pub playback_rate: f64,
     /// The window is too narrow to carry the whole bar.
     ///
     /// Set from the same breakpoint that turns the header's search entry into a
@@ -124,6 +127,7 @@ impl Default for Snapshot {
             lyrics_open: false,
             repeat: Repeat::default(),
             volume: 1.0,
+            playback_rate: crate::playback_rate::DEFAULT,
         }
     }
 }
@@ -213,6 +217,7 @@ pub enum NowPlayingOutput {
     Previous,
     Seek(u64),
     SetVolume(f64),
+    SetPlaybackRate(f64),
     SetShuffle(bool),
     SetRepeat(Repeat),
     CycleSegmentLoop,
@@ -246,8 +251,9 @@ impl SimpleComponent for NowPlaying {
             // scrubbing belongs: it has the width, and its scrubber is
             // already clamped to a size you can hit.
             //
-            // Outside the padded row on purpose, so the line reaches both
-            // edges rather than stopping short of them.
+            // Outside the padded row, but visibly inset with a quiet unplayed
+            // track. That makes it read as playback progress rather than a
+            // browser-style loading line stuck to the window edge.
             #[name = "progress"]
             gtk::ProgressBar {
                 add_css_class: "np-progress",
@@ -457,7 +463,7 @@ impl SimpleComponent for NowPlaying {
             gtk::Box {
                 set_orientation: gtk::Orientation::Horizontal,
                 set_valign: gtk::Align::Center,
-                set_spacing: 4,
+                set_spacing: 8,
 
                 // Shuffle and repeat flank the transport rather than sitting
                 // in it: they change what "next" *means* rather than doing
@@ -836,12 +842,19 @@ pub(crate) fn volume_is_new(incoming: f64, held: f64) -> bool {
 /// A free function so the arithmetic can be tested without a clock. Three
 /// separate attempts at this shipped broken; the tests below are the reason a
 /// fourth one will not.
-fn advance(base_ms: u64, ahead_ms: u64, duration_ms: u64, last_shown_ms: u64) -> u64 {
+fn advance(
+    base_ms: u64,
+    ahead_ms: u64,
+    playback_rate: f64,
+    duration_ms: u64,
+    last_shown_ms: u64,
+) -> u64 {
     // Only clamp against a duration we actually have. It is 0 until the first
     // metadata arrives, and clamping to that pins the position at the base —
     // the slider hides itself while duration is unknown, but the elapsed label
     // does not, and a frozen clock is a bug you can read.
-    let raw = base_ms + ahead_ms;
+    let scaled_ahead = (ahead_ms as f64 * playback_rate).round() as u64;
+    let raw = base_ms.saturating_add(scaled_ahead);
     let candidate = if duration_ms > 0 {
         raw.min(duration_ms)
     } else {
@@ -920,6 +933,7 @@ impl NowPlaying {
         let shown = advance(
             base,
             at.elapsed().as_millis() as u64,
+            self.snap.playback_rate,
             self.snap.duration_ms,
             self.shown_ms.get(),
         );
@@ -1050,37 +1064,43 @@ mod tests {
     #[test]
     fn the_slider_advances_by_real_time_and_no_more() {
         // 20s in, reported 300ms ago, on a 3 minute track.
-        assert_eq!(advance(20_000, 300, 180_000, 20_000), 20_300);
+        assert_eq!(advance(20_000, 300, 1.0, 180_000, 20_000), 20_300);
         // The offset is time since the *reading*, not since the app started.
         // Getting that wrong made a track that just began read minutes in.
-        assert_eq!(advance(0, 250, 180_000, 0), 250);
+        assert_eq!(advance(0, 250, 1.0, 180_000, 0), 250);
     }
 
     #[test]
     fn the_slider_never_runs_past_the_end() {
-        assert_eq!(advance(179_900, 5_000, 180_000, 179_900), 180_000);
+        assert_eq!(advance(179_900, 5_000, 1.0, 180_000, 179_900), 180_000);
     }
 
     #[test]
     fn a_small_backward_correction_is_absorbed() {
         // MusicKit reports unevenly; a 200ms step back is far more noticeable
         // than being 200ms optimistic, so the slider holds instead.
-        assert_eq!(advance(19_800, 0, 180_000, 20_000), 20_000);
+        assert_eq!(advance(19_800, 0, 1.0, 180_000, 20_000), 20_000);
     }
 
     #[test]
     fn a_large_jump_backwards_is_obeyed() {
         // A seek, or a new track. Holding here would strand the slider
         // mid-song for the whole of the next one.
-        assert_eq!(advance(0, 0, 180_000, 90_000), 0);
-        assert_eq!(advance(5_000, 0, 180_000, 120_000), 5_000);
+        assert_eq!(advance(0, 0, 1.0, 180_000, 90_000), 0);
+        assert_eq!(advance(5_000, 0, 1.0, 180_000, 120_000), 5_000);
     }
 
     #[test]
     fn a_zero_length_track_does_not_clamp_the_position_away() {
         // Duration can be 0 before the first metadata arrives; the position
         // must survive that rather than being clamped to nothing.
-        assert_eq!(advance(4_000, 100, 0, 4_000), 4_100);
+        assert_eq!(advance(4_000, 100, 1.0, 0, 4_000), 4_100);
+    }
+
+    #[test]
+    fn the_clock_follows_the_mirrored_playback_rate() {
+        assert_eq!(advance(20_000, 300, 2.0, 180_000, 20_000), 20_600);
+        assert_eq!(advance(20_000, 300, 0.5, 180_000, 20_000), 20_150);
     }
 
     #[test]

@@ -79,6 +79,10 @@ test('session events are credential-free and structurally checked', () => {
     authorized: true,
   }), true)
   assert.equal(isAllowedRendererEvent({ event: 'authorization-reflected' }), false)
+  assert.equal(isAllowedRendererEvent({ event: 'playback-rate', rate: 0.5 }), true)
+  assert.equal(isAllowedRendererEvent({ event: 'playback-rate', rate: 1.7 }), true)
+  assert.equal(isAllowedRendererEvent({ event: 'playback-rate', rate: 1.75 }), false)
+  assert.equal(isAllowedRendererEvent({ event: 'playback-rate', rate: 9 }), false)
   const queue = { event: 'queue', reason: 'items', position: 0, items: [] }
   assert.equal(isAllowedRendererEvent(queue), true)
   assert.equal(isAllowedRendererEvent({ ...queue, token: 'must-not-cross' }), false)

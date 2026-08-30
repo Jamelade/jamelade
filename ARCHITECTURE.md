@@ -77,6 +77,9 @@ playback, Chromium, and Widevine.
   password selector or renderer IPC is added.
 - `src/private_storage.rs` provides bounded, no-follow reads and atomic
   user-only writes for library, playback, and preference data.
+- `src/search_history.rs` stores at most 16 normalized queries in a private XDG
+  state file. Recording consent is separate, and disabling it never deletes
+  existing history. Search landing trends reuse the documented Apple chart.
 - `src/lyrics.rs` parses Apple TTML as bounded streaming XML and uses a separate
   credential-free HTTP client for independently opted-in fallbacks. A fallback
   clock reaches Apple localizations only after exact normalized line alignment;
@@ -89,7 +92,10 @@ playback, Chromium, and Widevine.
 - `src/app/global_shortcuts.rs` uses the XDG portal and receives only four fixed
   action IDs. It never observes or stores the user's key combinations.
 - Playlist writes expose only Apple's documented create and append operations.
-  Export files contain visible metadata and public links, not library IDs.
+  Append targets must also carry Apple's explicit `canEdit` permission. Export
+  files contain visible metadata and public links, not library IDs.
+- Playback speed is bounded to 0.5×–2× in exact 0.1× steps. Both processes
+  validate it, and the UI follows the effective rate echoed by MusicKit.
 - `src/discord.rs` is off by default and talks only to a validated same-user
   local Discord socket.
 - `src/apple_link.rs` accepts only bounded HTTPS URLs on `music.apple.com`.

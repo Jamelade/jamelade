@@ -131,6 +131,10 @@ pub struct DetailActions {
 pub struct DetailPage {
     /// Stable for the page's whole life. Clicks quote it back.
     pub id: u64,
+    /// The Apple resource this page projects. Kept so a successful write can
+    /// refresh only the affected open playlist instead of rebuilding every
+    /// detail page or guessing from its visible title.
+    kind: PageKind,
     /// What the list currently shows. The caller reads this to build a queue.
     pub entries: Vec<Entry>,
     pub artist_songs: Vec<crate::music::types::Track>,
@@ -167,7 +171,7 @@ impl DetailPage {
     ///
     /// `on_activate` is handed the row index that was clicked; `on_play` and
     /// `on_shuffle` fire for the header's two buttons.
-    pub fn new(id: u64, heading: &str, state: RowState, actions: DetailActions) -> Self {
+    pub fn new(id: u64, kind: PageKind, state: RowState, actions: DetailActions) -> Self {
         let DetailActions {
             activate: on_activate,
             play: on_play,
@@ -187,6 +191,7 @@ impl DetailPage {
 
         let cover = Cover::new(ART_PX);
 
+        let heading = kind.heading();
         let title = gtk::Label::builder()
             .css_classes(["title-1"])
             .wrap(true)
@@ -372,6 +377,7 @@ impl DetailPage {
 
         Self {
             id,
+            kind,
             entries: Vec::new(),
             artist_songs: Vec::new(),
             artist_latest_release: None,
@@ -402,6 +408,10 @@ impl DetailPage {
 
     pub fn widget(&self) -> &adw::NavigationPage {
         &self.page
+    }
+
+    pub fn kind(&self) -> &PageKind {
+        &self.kind
     }
 
     /// Whether this page's header draws the window controls. False while the

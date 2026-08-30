@@ -140,6 +140,8 @@ pub enum Command {
     Seek { position_ms: u64 },
     #[serde(rename = "setVolume")]
     SetVolume { volume: f64 },
+    #[serde(rename = "setPlaybackRate", rename_all = "camelCase")]
+    SetPlaybackRate { rate: f64 },
     #[serde(rename = "setShuffle")]
     SetShuffle { shuffle: bool },
     #[serde(rename = "setRepeat")]
@@ -211,6 +213,7 @@ impl Command {
             Self::ClearQueue => "clearQueue",
             Self::Seek { .. } => "seek",
             Self::SetVolume { .. } => "setVolume",
+            Self::SetPlaybackRate { .. } => "setPlaybackRate",
             Self::SetShuffle { .. } => "setShuffle",
             Self::SetRepeat { .. } => "setRepeat",
             Self::RefreshSession => "refreshSession",
@@ -315,6 +318,13 @@ pub enum Event {
     /// sending a `SetVolume` back for a value MusicKit just reported is a loop.
     #[serde(rename = "volume")]
     Volume { volume: f64 },
+
+    /// MusicKit's effective HTML-media playback rate, at attach and on change.
+    #[serde(rename = "playback-rate", rename_all = "camelCase")]
+    PlaybackRate {
+        #[serde(deserialize_with = "supported_playback_rate")]
+        rate: f64,
+    },
 
     /// Credential-free projection of the browser-owned Apple session.
     #[serde(rename = "session")]
@@ -464,6 +474,12 @@ fn api_body<'de, D: serde::Deserializer<'de>>(de: D) -> Result<String, D::Error>
             "Apple Music broker body exceeded its limit",
         ))
     }
+}
+
+fn supported_playback_rate<'de, D: serde::Deserializer<'de>>(de: D) -> Result<f64, D::Error> {
+    let value = f64::deserialize(de)?;
+    crate::playback_rate::normalize(value)
+        .ok_or_else(|| serde::de::Error::custom("unsupported playback rate"))
 }
 
 impl std::fmt::Debug for ApiResponse {
@@ -673,6 +689,20 @@ mod tests {
             .name(),
             "playStation"
         );
+    }
+
+    #[test]
+    fn playback_rate_uses_one_bounded_numeric_command() {
+        let json = serde_json::to_string(&Command::SetPlaybackRate { rate: 1.7 }).unwrap();
+        assert_eq!(json, r#"{"cmd":"setPlaybackRate","rate":1.7}"#);
+        assert_eq!(
+            Command::SetPlaybackRate { rate: 1.7 }.name(),
+            "setPlaybackRate"
+        );
+
+        assert!(serde_json::from_str::<Event>(r#"{"event":"playback-rate","rate":1.5}"#).is_ok());
+        assert!(serde_json::from_str::<Event>(r#"{"event":"playback-rate","rate":1.75}"#).is_err());
+        assert!(serde_json::from_str::<Event>(r#"{"event":"playback-rate","rate":9}"#).is_err());
     }
 
     #[test]

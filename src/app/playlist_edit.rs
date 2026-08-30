@@ -39,6 +39,7 @@ impl AppModel {
             Some("Create Playlist"),
             Some("Creates an empty playlist in your Apple Music library."),
         );
+        dialog.add_css_class("jamelade-themed-dialog");
         dialog.set_extra_child(Some(&fields));
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("create", "Create");
@@ -78,17 +79,20 @@ impl AppModel {
         sender: &ComponentSender<Self>,
         parent: &adw::ApplicationWindow,
     ) {
-        if self.playlists.is_empty() {
-            self.toast("Create a playlist first, then add this song");
+        let editable: Vec<_> = self
+            .playlists
+            .iter()
+            .filter(|playlist| playlist.can_edit)
+            .collect();
+        if editable.is_empty() {
+            self.toast("Create an editable playlist first, then add this song");
             return;
         }
-        let names: Vec<&str> = self
-            .playlists
+        let names: Vec<&str> = editable
             .iter()
             .map(|playlist| playlist.name.as_str())
             .collect();
-        let ids: Vec<String> = self
-            .playlists
+        let ids: Vec<String> = editable
             .iter()
             .map(|playlist| playlist.id.clone())
             .collect();
@@ -97,13 +101,16 @@ impl AppModel {
             .model(&gtk::StringList::new(&names))
             .selected(0)
             .build();
+        chooser.add_css_class("preferences-value-row");
         let group = adw::PreferencesGroup::new();
+        group.add_css_class("preferences-surface-group");
         group.add(&chooser);
 
         let dialog = adw::AlertDialog::new(
             Some("Add to Playlist"),
             Some("The song is appended to the selected Apple Music playlist."),
         );
+        dialog.add_css_class("jamelade-themed-dialog");
         dialog.set_extra_child(Some(&group));
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("add", "Add");
@@ -125,6 +132,39 @@ impl AppModel {
                 });
             });
         }
+        dialog.present(Some(parent));
+    }
+
+    /// Apple's append endpoint returns only an acceptance status, so it cannot
+    /// carry the native apps' duplicate warning. Jamelade performs a bounded
+    /// read first and asks explicitly before sending a second copy.
+    pub(super) fn confirm_duplicate_playlist(
+        &self,
+        playlist_id: String,
+        catalog_id: String,
+        sender: &ComponentSender<Self>,
+        parent: &adw::ApplicationWindow,
+    ) {
+        let dialog = adw::AlertDialog::new(
+            Some("Song Already in Playlist"),
+            Some("This playlist already contains the song. Add another copy?"),
+        );
+        dialog.add_css_class("jamelade-themed-dialog");
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("add", "Add Anyway");
+        dialog.set_response_appearance("add", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+
+        let sender = sender.clone();
+        dialog.connect_response(None, move |_, response| {
+            if response == "add" {
+                sender.input(AppMsg::AppendTrackToPlaylist {
+                    playlist_id: playlist_id.clone(),
+                    catalog_id: catalog_id.clone(),
+                });
+            }
+        });
         dialog.present(Some(parent));
     }
 }

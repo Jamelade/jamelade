@@ -213,6 +213,9 @@ impl AppModel {
         if self.view == View::Explore {
             self.load_explore(sender);
         }
+        if self.view == View::Search {
+            self.load_search_trending(sender);
+        }
         // Jamkin Mode is independent of the navigation stack. In particular,
         // a track-change event must refresh its timeline while Songs, Explore,
         // or any detail page is visible, not only while Lyrics is selected.
@@ -261,6 +264,7 @@ impl AppModel {
         self.loading_explore = false;
         self.tried_explore = false;
         self.explore_view.clear();
+        self.clear_search_landing_session();
 
         self.lyrics_generation = self.lyrics_generation.wrapping_add(1);
         self.lyrics_for = None;

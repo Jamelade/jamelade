@@ -269,6 +269,7 @@ pub enum PlayerViewInput {
     ShowLyrics,
     ToggleFavorite,
     SetSleepTimer(crate::sleep_timer::Choice),
+    SetPlaybackRate(f64),
     SleepTimerActive(bool),
     ShowCredits,
     VolumeChanged(f64),
@@ -921,6 +922,9 @@ impl SimpleComponent for PlayerView {
             }
             PlayerViewInput::SetSleepTimer(choice) => {
                 let _ = sender.output(NowPlayingOutput::SetSleepTimer(choice));
+            }
+            PlayerViewInput::SetPlaybackRate(rate) => {
+                let _ = sender.output(NowPlayingOutput::SetPlaybackRate(rate));
             }
             PlayerViewInput::SleepTimerActive(active) => self.refresh_sleep_timer(active),
             PlayerViewInput::ShowCredits => {

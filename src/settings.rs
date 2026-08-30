@@ -156,6 +156,10 @@ pub struct Settings {
     pub lyrics_font_scale: u8,
     /// Notify when the track changes. Off by default (`bool`'s default).
     pub notify_track_change: bool,
+    /// Record bounded catalog queries in a private device-local history file.
+    /// Turning this off stops future writes but deliberately preserves existing
+    /// entries until Clear History is chosen.
+    pub search_history_enabled: bool,
     /// Share the visible current-track metadata with the local Discord client.
     /// Off by default because Discord can forward that activity to an account
     /// and its audience; this never implies consent merely from Discord being
@@ -281,6 +285,7 @@ impl Default for Settings {
             lyrics_accent_strength: DEFAULT_LYRICS_ACCENT_STRENGTH,
             lyrics_font_scale: DEFAULT_LYRICS_FONT_SCALE,
             notify_track_change: false,
+            search_history_enabled: true,
             discord_activity: false,
             global_shortcuts: false,
             listenbrainz_scrobbling: false,
@@ -336,6 +341,9 @@ impl Settings {
         }
         if let Ok(notify) = file.boolean(GROUP, "notify-track-change") {
             settings.notify_track_change = notify;
+        }
+        if let Ok(enabled) = file.boolean(GROUP, "search-history-enabled") {
+            settings.search_history_enabled = enabled;
         }
         if let Ok(enabled) = file.boolean(GROUP, "discord-activity") {
             settings.discord_activity = enabled;
@@ -465,6 +473,7 @@ impl Settings {
         file.set_string(GROUP, "theme", self.theme.as_str());
         file.set_string(GROUP, "language", self.language.as_str());
         file.set_boolean(GROUP, "notify-track-change", self.notify_track_change);
+        file.set_boolean(GROUP, "search-history-enabled", self.search_history_enabled);
         file.set_boolean(GROUP, "discord-activity", self.discord_activity);
         file.set_boolean(GROUP, "global-shortcuts", self.global_shortcuts);
         file.set_boolean(

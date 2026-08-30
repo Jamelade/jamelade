@@ -63,6 +63,7 @@ const RENDERER_EVENTS = new Set([
   'library-write',
   'modes',
   'nowPlaying',
+  'playback-rate',
   'playbackState',
   'position',
   'queue',
@@ -87,6 +88,7 @@ const RENDERER_EVENT_KEYS = Object.freeze({
   'library-write': ['detail', 'event', 'id', 'kind', 'ok'],
   modes: ['event', 'repeat', 'shuffle'],
   nowPlaying: ['event', 'item', 'queue'],
+  'playback-rate': ['event', 'rate'],
   playbackState: ['event', 'state'],
   position: ['durationMs', 'event', 'positionMs'],
   queue: ['event', 'items', 'position', 'reason'],
@@ -212,6 +214,12 @@ function isAllowedRendererEvent(value) {
   }
   if (value.event === 'authorization-reflected'
     && typeof value.authorized !== 'boolean') return false
+  if (value.event === 'playback-rate'
+    && (typeof value.rate !== 'number'
+      || !Number.isFinite(value.rate)
+      || value.rate < 0.5
+      || value.rate > 2
+      || Math.abs(value.rate * 10 - Math.round(value.rate * 10)) >= 0.000001)) return false
 
   if ('detail' in value && typeof value.detail !== 'string') return false
   if ('code' in value

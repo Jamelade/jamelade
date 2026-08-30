@@ -39,6 +39,15 @@ Artist pages combine the latest release, top songs, albums, and the biography
 Apple supplies at runtime. Select the artist portrait to open or close the
 biography without leaving the page.
 
+### Search that starts useful
+
+An empty Search page shows up to 16 recent device-local queries, five quick
+category shortcuts, and a **Trending Now** row from Apple's documented
+storefront chart. Apple does not expose trending query strings, so Jamelade
+does not scrape or mislabel them. Search recording can be switched off without
+deleting existing entries; each pill, its right-click action, and **Clear
+History** remove only local state.
+
 ### Live lyrics with privacy-first fallbacks
 
 Jamelade follows synchronized lyrics while keeping the selected Jamkin visible.
@@ -111,12 +120,15 @@ the normal queue repeat mode or write loop points to disk. See
 Jamelade can create an Apple Music playlist, add a song to an existing one,
 and export a playlist as M3U8, CSV, or JSON. Exports contain visible metadata
 and public Apple Music links, not account or library identifiers. The expanded
-player also includes a sleep timer and song credits. Optional global shortcuts
-use the desktop portal, so the desktop—not Jamelade—owns the chosen keys.
+player also includes a sleep timer, a bounded 0.5×–2× MusicKit playback-speed
+slider in 0.1× steps, and song credits. Optional global shortcuts use the
+desktop portal, so the desktop—not Jamelade—owns the chosen keys.
 
 Apple's documented API exposes playlist creation and appending, but not safe
 rename, removal, or reordering operations. Jamelade does not guess at
-undocumented destructive endpoints.
+undocumented destructive endpoints. The add dialog includes only playlists
+Apple explicitly marks editable; saved editorial playlists remain browse-only.
+Jamelade checks the chosen playlist and asks before appending a duplicate song.
 
 ### Optional Discord Rich Presence
 
@@ -167,6 +179,7 @@ or IPC capability.
 | Discord activity | Off | Selected song metadata and Jamkin are handed to the local Discord client; Discord then applies its own privacy settings |
 | ListenBrainz | Off | Title, artist, album, duration, listen time, and the requester's IP address |
 | Global shortcuts | Off | Nothing leaves the device; the desktop portal stores the selected bindings |
+| Search history | On | Nothing extra; up to 16 queries are stored in a private local state file, and Apple receives a query only when it is searched |
 | Desktop Jamkin | On | Nothing extra; it reuses local playback and lyric state |
 | Glass palette and playlist collages | Local | Nothing; both are generated and cached on the device |
 

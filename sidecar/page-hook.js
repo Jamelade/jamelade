@@ -229,6 +229,18 @@ function emitVolume() {
   emit('volume', { volume: pick(() => music.volume) ?? 1 })
 }
 
+function supportedPlaybackRate(rate) {
+  return Number.isFinite(rate)
+    && rate >= 0.5
+    && rate <= 2
+    && Math.abs(rate * 10 - Math.round(rate * 10)) < 0.000001
+}
+
+function emitPlaybackRate() {
+  const rate = pick(() => music.playbackRate) ?? 1
+  emit('playback-rate', { rate: supportedPlaybackRate(rate) ? rate : 1 })
+}
+
 function wireEvents() {
   on('playbackStateDidChange', () =>
     emit('playbackState', { state: stateName(pick(() => music.playbackState) ?? 0) }))
@@ -261,6 +273,7 @@ function wireEvents() {
   // opposite and open at 1.0, so the bar showed full volume over silent audio
   // until the first keypress snapped the two together.
   on('playbackVolumeDidChange', () => emitVolume())
+  on('playbackRateDidChange', () => emitPlaybackRate())
 
   on('authorizationStatusDidChange', () => {
     const session = pushSession()
@@ -439,7 +452,13 @@ function apiPayload(response) {
 function emitApiResponse(requestId, status, payload) {
   let body
   try {
+    // A successful empty MusicKit POST can return `{ data: undefined }`.
+    // JSON.stringify(undefined) is itself undefined, which the hardened event
+    // boundary correctly refuses because `body` must be a string. Normalize
+    // that one empty representation so the typed broker receives the status
+    // instead of timing out after the command already completed.
     body = JSON.stringify(payload)
+    if (body === undefined) body = 'null'
   } catch {
     body = ''
     status = 502
@@ -720,6 +739,15 @@ const commands = {
   setVolume: ({ volume }) => {
     music.volume = volume
   },
+  setPlaybackRate: ({ rate }) => {
+    if (!supportedPlaybackRate(rate)) throw new Error('unsupported playback rate')
+    // The current element and the next track: MusicKit exposes both properties.
+    music.defaultPlaybackRate = rate
+    music.playbackRate = rate
+    // Like shuffle/repeat, a programmatic change is not guaranteed to fire the
+    // corresponding event in every MusicKit build, so echo the effective value.
+    emitPlaybackRate()
+  },
   setShuffle: ({ shuffle }) => {
     music.shuffleMode = shuffle ? 1 : 0
     // Echoed explicitly. MusicKit does not reliably fire
@@ -877,6 +905,7 @@ function wire(trigger) {
   // it. This is what makes a fresh launch — and a supervised restart — agree
   // with what you can hear.
   emitVolume()
+  emitPlaybackRate()
   return true
 }
 

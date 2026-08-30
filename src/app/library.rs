@@ -763,6 +763,7 @@ mod tests {
                     mosaic_artwork: Vec::new(),
                     share_url: None,
                     library: false,
+                    can_edit: false,
                 })
                 .collect(),
         }

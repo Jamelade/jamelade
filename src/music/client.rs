@@ -979,6 +979,25 @@ impl Client {
         Ok(sections)
     }
 
+    /// A small first-party storefront chart for the empty Search page.
+    ///
+    /// Apple documents term suggestions only *after* a term is supplied; it
+    /// does not publish trending query strings. Reusing the documented chart
+    /// response gives the landing page honest current content without scraping
+    /// the private web-player layout.
+    pub async fn trending_tracks(&self) -> Result<Vec<Track>> {
+        let sections = self.chart_sections().await?;
+        Ok(sections
+            .into_iter()
+            .flat_map(|section| section.items)
+            .filter_map(|item| match item {
+                ExploreItem::Track(track) => Some(track),
+                ExploreItem::Album(_) | ExploreItem::Playlist(_) | ExploreItem::Station(_) => None,
+            })
+            .take(5)
+            .collect())
+    }
+
     /// Which of these catalog songs are already in the library, and under what
     /// library id.
     ///

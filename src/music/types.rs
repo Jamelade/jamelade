@@ -183,6 +183,10 @@ pub struct Playlist {
     pub share_url: Option<String>,
     /// As [`Album::library`].
     pub library: bool,
+    /// Apple's explicit LibraryPlaylist edit permission. Saved editorial
+    /// playlists can appear in the library but reject append requests.
+    #[serde(default)]
+    pub can_edit: bool,
 }
 
 /// An artist, as a search result or a page header.
@@ -676,6 +680,8 @@ pub(crate) struct PlaylistAttributes {
     pub description: Option<DescriptionAttribute>,
     #[serde(default)]
     pub url: String,
+    #[serde(default)]
+    pub can_edit: bool,
 }
 
 /// Apple wraps editorial text in an object with long, short, and tagline
@@ -706,6 +712,7 @@ impl From<Resource<PlaylistAttributes>> for Playlist {
         let share_url = a
             .as_ref()
             .and_then(|a| crate::apple_link::canonical(&a.url));
+        let can_edit = a.as_ref().is_some_and(|attributes| attributes.can_edit);
         Playlist {
             id: res.id,
             date_added: a.as_ref().map(|a| a.date_added.clone()).unwrap_or_default(),
@@ -731,6 +738,7 @@ impl From<Resource<PlaylistAttributes>> for Playlist {
             share_url,
             // Set by whichever client method fetched it, as for Album/Artist.
             library: false,
+            can_edit,
         }
     }
 }
@@ -1064,12 +1072,14 @@ mod tests {
                 artwork: None,
                 description: None,
                 url: String::new(),
+                can_edit: true,
             }),
         });
         assert_eq!(playlist.name, "Late night");
         assert!(playlist.curator.is_empty());
         assert!(playlist.description.is_empty());
         assert!(playlist.artwork.is_none());
+        assert!(playlist.can_edit);
         // Set by the client method that fetched it, never here.
         assert!(!playlist.library);
     }
@@ -1133,6 +1143,7 @@ mod tests {
                     tagline: String::new(),
                 }),
                 url: String::new(),
+                can_edit: false,
             }),
         });
         assert_eq!(playlist.curator, "Apple Music");

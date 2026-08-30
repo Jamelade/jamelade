@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Added a compact 0.5×–2× playback-speed slider in 0.1× steps behind the
+  far-right rate button while preserving the centred play button and clocks.
+- Refined visual hierarchy with stronger secondary-text contrast, distinct
+  value/toggle/slider preference rows, an inset compact-player progress track,
+  a quieter search field, and roomier glass-backed media-grid hover states.
+- Limited Add to Playlist to library playlists Apple explicitly marks editable,
+  themed the chooser consistently, fixed empty successful MusicKit responses,
+  warns before adding a duplicate, and refreshes the affected open playlist
+  after Apple accepts an append.
+- Retuned JamJoe's accent from muted brown to the lively, accessible burnt
+  orange used in his own artwork.
+- Replaced the empty Search prompt with local recent-search pills, per-entry and
+  clear-all removal, five category shortcuts, and a storefront Trending Now row
+  backed by Apple's documented chart. Recording is optional and disabling it
+  preserves existing history.
 - Increased the colour presence of the Blossom, Tidepool, and Vermilion named
   themes while retaining their existing light-surface contrast.
 - Added `Hide JamBun`, `Hide JamPam`, or `Hide JamJoe` to the active Desktop

@@ -6,7 +6,7 @@
 # needs to be a deliberate line in a diff.
 #
 # path                              max   why
-src/app/mod.rs                      4424  # the model, the messages, `view!` and both reducers.
+src/app/mod.rs                      4563  # the model, the messages, `view!` and both reducers.
                                           # Playlist tools, timers, credits, portals, scrobbling,
                                           # lyric variants and timing cross the root state here;
                                           # their I/O and widgets remain in focused modules.
@@ -140,9 +140,21 @@ src/app/mod.rs                      4424  # the model, the messages, `view!` and
                                           # keeps ordinary notices transient; decisions remain dialogs.
                                           # 4410 -> 4424: the primary Show Jamkin item keeps one
                                           # action handle so Preferences and right-click hiding agree.
-src/app/chrome.rs                   1101  # menus and the dialogs they open. Jamelade's companion
+                                          # 4424 -> 4436: playback speed crosses the shared root
+                                          # reducer and both player projections.
+                                          # 4436 -> 4473: Search adds typed actions, state ownership
+                                          # and one local-ref page; its behavior is split out.
+                                          # 4473 -> 4487: one generation-gated pause commits live
+                                          # searches without recording every keystroke.
+                                          # 4487 -> 4563: bounded playback-rate and playlist duplicate,
+                                          # write and refresh results cross the root reducer; controls,
+                                          # dialogs and network work remain split out.
+src/app/chrome.rs                   1150  # menus and the dialogs they open. Jamelade's companion
                                           # Credits and the opt-in connection/language rows use
                                           # native dialogs; their behavior remains elsewhere.
+                                          # 1101 -> 1130: preference rows receive only visual type
+                                          # classes; setting behavior remains in the reducer.
+                                          # 1130 -> 1150: one local Search-history consent group.
                                           # 1078 -> 1080: About receives the selected companion and
                                           # resolves its existing local icon name; no new I/O lives here.
                                           # 1080 -> 1101: one stateful Show Jamkin action supplies the
@@ -219,12 +231,16 @@ src/components/lyrics_view.rs        744  # one native synchronized-lyrics surfa
                                           # Jamkin actor; lyric animation remains in this component.
 src/lyrics.rs                         660  # provider ordering, bounded parsing and exact-match timeline
                                           # inheritance form one privacy boundary; parser tests remain split.
-src/components/detail_page.rs        658  # one album/artist/playlist detail surface. Playlist export
+src/components/detail_page.rs        668  # one album/artist/playlist detail surface. Playlist export
                                           # adds a fixed three-format menu and hands data to its
                                           # separate bounded renderer.
-src/components/now_playing.rs       1116  # one component, and the one whose seek arithmetic took
+                                          # 658 -> 668: retain typed resource identity so an accepted
+                                          # append refreshes only its open library playlist.
+src/components/now_playing.rs       1136  # one component, and the one whose seek arithmetic took
                                           # One typed credits intent joins its existing outputs.
                                           # four rounds to get right. Splitting it is a design
+                                          # 1116 -> 1136: its clock now respects MusicKit speed and
+                                          # the compact transport gains measured spacing.
                                           # question, not a move.
                                           # 1109 -> 1115: the shared snapshot carries favourite state
                                           # and one bounded intent to the expanded player.
@@ -248,10 +264,11 @@ src/components/now_playing.rs       1116  # one component, and the one whose see
                                           # active page so that same button can stand down there.
                                           # 1103 -> 1109: the snapshot carries the playing catalog id
                                           # and exposes bounded link/navigation intents.
-src/music/client.rs                 2093  # one endpoint per method against one API. Long because
+src/music/client.rs                 2112  # one endpoint per method against one API. Long because
                                           # Documented playlist writes, bounded credits and optional
                                           # first-party lyric variants stay at the Apple boundary.
                                           # Apple is, and each method is short.
+                                          # 2093 -> 2112: Search reuses parsed storefront chart tracks.
                                           # 2081 -> 2093: credits request an English localization and
                                           # fall back to Apple's default response through the same
                                           # bounded authenticated GET path.
@@ -283,9 +300,10 @@ src/music/client.rs                 2093  # one endpoint per method against one 
                                           # 1540 -> 1624: Apple lyrics add one numeric-id endpoint, a
                                           # dedicated 2 MiB response ceiling and tiny wire types. TTML
                                           # parsing remains in `lyrics/apple_ttml.rs`.
-src/music/types.rs                  1142  # the JSON boundary (rule 9). Wire types and our types
+src/music/types.rs                  1153  # the JSON boundary (rule 9). Wire types and our types
                                           # side by side is the point — they are read together.
                                           # 1112 -> 1142: library artists carry the catalog twin's
+                                          # 1142 -> 1153: playlists retain Apple's explicit edit bit.
                                           # editorial notes and tests pin the relationship fallback;
                                           # the English-localization note documents the client fallback.
                                           # 1036 -> 1112: editorial notes become capped plain text and
@@ -333,7 +351,7 @@ src/app/library.rs                   859  # four collections and the catalog sea
                                           # 850 -> 855: asynchronous loads carry the account generation
                                           # that prevents a signed-out account repopulating the UI.
                                           # 855 -> 858: fixtures state the optional public share URL.
-src/player/protocol.rs               963  # the whole sidecar contract in one file, deliberately
+src/player/protocol.rs               993  # the whole sidecar contract in one file, deliberately
                                           # Two typed playlist-write commands avoid an arbitrary
                                           # credential-bearing request-body capability.
                                           # (rule 9). Splitting it would hide the drift it exists
@@ -362,9 +380,11 @@ src/player/protocol.rs               963  # the whole sidecar contract in one fi
                                           # boundary, with malformed-status and oversized-body tests.
                                           # 952 -> 963: one credential-free keyring-restore failure
                                           # event and its parse regression keep vault errors typed.
-src/components/player_view/mod.rs   1080  # the model, `view!` and the reducer. The transport
+                                          # 963 -> 992: playback rate is a bounded command and event.
+src/components/player_view/mod.rs   1083  # the model, `view!` and the reducer. The transport
                                           # Sleep-timer state and credits forward through the one
                                           # expanded-player model.
+                                          # 1080 -> 1083: one typed playback-rate intent is forwarded.
                                           # 1049 -> 1069: credits sits beside the song title; its
                                           # existing intent and dialog remain unchanged.
                                           # 1069 -> 1070: credits joins the shared control-state style.
@@ -392,9 +412,16 @@ src/components/player_view/mod.rs   1080  # the model, `view!` and the reducer. 
                                           # the empty transport slot no longer claiming spacing.
                                           # 890 -> 935: separate accent-coloured artist and album links
                                           # replace the ambiguous combined subtitle.
-src/style.rs                        1504  # the accent, and the cover behind the whole window. The only
+                                          # 992 -> 993: exact-tenth rates share one bounded decoder.
+src/style.rs                        1652  # the accent, and the cover behind the whole window. The only
                                           # CSS, and each rule argues for itself where it sits.
                                           # 1486 -> 1504: adaptive clear-art text uses one restrained
+                                          # 1504 -> 1561: the refinement pass distinguishes preference
+                                          # rows and strengthens search, progress and grid hierarchy.
+                                          # 1561 -> 1638: Search pills, category shortcuts and chart
+                                          # cards share this one application stylesheet.
+                                          # 1638 -> 1652: playlist-write dialogs inherit the selected
+                                          # theme as flat application surfaces.
                                           # contrast shadow instead of a four-sided outline; tests pin
                                           # both dark- and light-foreground rendering.
                                           # 1574 -> 1486: both player surfaces return to the selected
@@ -513,9 +540,12 @@ sidecar/main.js                      876  # the Electron process boundary: sandb
                                           # user-token fallback and no credential logging or new origin.
                                           # 860 -> 871: credential events are consumed inside the browser
                                           # process and reduced to credential-free session state for Rust.
-sidecar/page-hook.js                 928  # the injected MusicKit hook (rule 4), and the one file that is
+sidecar/page-hook.js                 957  # the injected MusicKit hook (rule 4), and the one file that is
                                           # Documented playlist writes are exact typed routes with
                                           # bounded bodies; no generic POST bridge was added.
+                                          # 928 -> 950: six allowlisted MusicKit rates are mirrored.
+                                          # 950 -> 957: rate tenths stay bounded and successful empty
+                                          # POST bodies normalize to the existing string envelope.
                                           # deliberately defensive line by line: every property
                                           # feature-detected, every silent failure made loud.
                                           # 844 -> 857: a three-second feature-detected wait bridges

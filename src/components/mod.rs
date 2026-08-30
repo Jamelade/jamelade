@@ -18,6 +18,7 @@ pub mod now_playing;
 pub mod player_view;
 pub mod prune;
 pub mod queue_view;
+pub mod search_landing;
 pub mod track_row;
 
 /// Take keyboard focus out of a list before its model is edited.

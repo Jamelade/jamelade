@@ -28,6 +28,7 @@ use crate::components::now_playing::{
 };
 use crate::components::player_view::{PlayerView, PlayerViewInput};
 use crate::components::queue_view::{QueueView, QueueViewInput, QueueViewOutput};
+use crate::components::search_landing::{SearchLanding, SearchLandingAction};
 use crate::components::track_row::LibraryRowWidgets;
 use crate::components::track_row::{Entry, LibraryItem, RowMenuRequest};
 use crate::components::{
@@ -62,6 +63,7 @@ mod playlist_edit;
 mod queue;
 mod row_menu;
 mod scrobbling;
+mod search;
 mod segment_loop;
 mod status;
 mod supervise;
@@ -83,6 +85,9 @@ const TICK_MS: u32 = 500;
 /// The library filter is local and runs on every keystroke; the catalog is a
 /// network request, and firing one per character would be both slow and rude.
 const SEARCH_DEBOUNCE_MS: u64 = 350;
+/// A query becomes history only after it has stayed unchanged long enough to
+/// be intentional. Enter and result activation still commit immediately.
+const SEARCH_HISTORY_COMMIT_MS: u64 = 1_500;
 
 /// Apple caps search at 25 results per request, so this is its ceiling rather
 /// than a choice. More than that means paging with an offset.
@@ -194,6 +199,13 @@ pub struct AppModel {
     loading_explore: bool,
     tried_explore: bool,
     explore_generation: u64,
+    /// Useful content behind an empty catalog query. Search terms persist only
+    /// in the separate bounded private history; Apple chart rows stay in memory.
+    search_landing: SearchLanding,
+    search_history: crate::search_history::History,
+    loading_search_trending: bool,
+    tried_search_trending: bool,
+    search_trending_generation: u64,
     /// Lyrics are fetched only while this page is open and the opt-in is on.
     /// The cache is memory-only so listening metadata does not become a second
     /// history file on disk.
@@ -547,6 +559,7 @@ pub enum AppMsg {
     Previous,
     Seek(u64),
     SetVolume(f64),
+    SetPlaybackRate(f64),
     /// Nudge the volume by one [`VOLUME_STEP`]. Separate from `SetVolume`
     /// because an accelerator's closure cannot see the model, so only the
     /// reducer knows what the current volume is to step from.
@@ -612,6 +625,10 @@ pub enum AppMsg {
     /// Play the visible list, starting at this row.
     PlayFrom(usize),
     SearchChanged(String),
+    /// Explicitly commit the current query to device-local history.
+    CommitSearch,
+    CommitSearchAfter(u64),
+    SearchLandingAction(SearchLandingAction),
     /// The debounce elapsed for this generation; run the catalog search.
     RunCatalogSearch(u64),
     SetView(View),
@@ -687,6 +704,12 @@ pub enum AppMsg {
         catalog_id: String,
     },
     AddTrackToPlaylist {
+        playlist_id: String,
+        catalog_id: String,
+    },
+    /// Proceed after the duplicate preflight, either because the song is new
+    /// or because the user explicitly chose Add Anyway.
+    AppendTrackToPlaylist {
         playlist_id: String,
         catalog_id: String,
     },
@@ -767,6 +790,7 @@ pub enum AppMsg {
     AdjustLyricTiming(i32),
     SelectLyricVariant(usize),
     SetNotifyTrackChange(bool),
+    SetSearchHistoryEnabled(bool),
     /// LRCLIB metadata disclosure; off until explicitly enabled.
     SetLyricsEnabled(bool),
     /// A separate opt-in for the token-free Lyrics.ovh fallback.
@@ -905,6 +929,10 @@ pub enum CommandMsg {
         generation: u64,
         result: Result<Explore, String>,
     },
+    SearchTrending {
+        generation: u64,
+        result: Result<Vec<Track>, String>,
+    },
     Lyrics {
         generation: u64,
         query: crate::lyrics::Query,
@@ -943,9 +971,18 @@ pub enum CommandMsg {
         cover: Option<artwork::Decoded>,
     },
     PlaylistTileArt(playlist_art::Finished),
+    PlaylistDuplicateChecked {
+        generation: u64,
+        playlist_id: String,
+        catalog_id: String,
+        result: Result<bool, String>,
+    },
     PlaylistWritten {
         generation: u64,
-        created: bool,
+        /// `None` for creation; otherwise `(playlist id, expected catalog id)`
+        /// so the affected open page can wait briefly for Apple's 202 write to
+        /// become visible instead of repainting the old playlist immediately.
+        append: Option<(String, String)>,
         result: Result<(), String>,
     },
     Credits {
@@ -974,6 +1011,7 @@ fn map_player_output(out: NowPlayingOutput) -> AppMsg {
         NowPlayingOutput::Previous => AppMsg::Previous,
         NowPlayingOutput::Seek(ms) => AppMsg::Seek(ms),
         NowPlayingOutput::SetVolume(v) => AppMsg::SetVolume(v),
+        NowPlayingOutput::SetPlaybackRate(rate) => AppMsg::SetPlaybackRate(rate),
         NowPlayingOutput::SetShuffle(on) => AppMsg::SetShuffle(on),
         NowPlayingOutput::SetRepeat(r) => AppMsg::SetRepeat(r),
         NowPlayingOutput::CycleSegmentLoop => AppMsg::CycleSegmentLoop,
@@ -1277,6 +1315,7 @@ impl Component for AppModel {
 
                                             #[name = "search_entry"]
                                             add_named[Some("search")] = &gtk::SearchEntry {
+                                                add_css_class: "jamelade-search-entry",
                                                 // Never a fixed width: 320px here
                                                 // was a floor under the window and
                                                 // the app could not be tiled.
@@ -1285,7 +1324,7 @@ impl Component for AppModel {
                                                 // header and stops short of absurd
                                                 // on a wide one.
                                                 set_hexpand: true,
-                                                set_max_width_chars: 60,
+                                                set_max_width_chars: 48,
                                                 // Typing here before the browser
                                                 // session arrives queries a catalog that
                                                 // cannot answer.
@@ -1303,6 +1342,7 @@ impl Component for AppModel {
                                                 connect_search_changed[sender] => move |entry| {
                                                     sender.input(AppMsg::SearchChanged(entry.text().into()));
                                                 },
+                                                connect_activate => AppMsg::CommitSearch,
                                                 // Escape, as it cancels every other
                                                 // search in GNOME.
                                                 //
@@ -1422,6 +1462,7 @@ impl Component for AppModel {
                                         #[name = "filter_button"]
                                         pack_end = &gtk::MenuButton {
                                             add_css_class: "flat",
+                                            add_css_class: "jamelade-search-filter",
                                             set_always_show_arrow: true,
                                             set_tooltip_text: Some(crate::i18n::tr("What to search for")),
                                             #[watch]
@@ -1578,17 +1619,11 @@ impl Component for AppModel {
                                             },
                                         },
 
-                                        // An empty search box is not a failed
-                                        // search. Telling someone that Apple
-                                        // Music has nothing matching "" is
-                                        // nonsense — this is an invitation.
-                                        add_named[Some("search-prompt")] = &adw::StatusPage {
-                                            set_icon_name: Some("system-search-symbolic"),
-                                            set_title: crate::i18n::tr("Search Apple Music"),
-                                            set_description: Some(
-                                                "Find songs from the whole catalogue, not just your library.",
-                                            ),
-                                        },
+                                        // Empty search is useful: local recent
+                                        // queries, fixed category shortcuts and
+                                        // Apple storefront chart entries.
+                                        #[local_ref]
+                                        add_named[Some("search-prompt")] = search_landing_content -> gtk::ScrolledWindow {},
 
                                         // Distinct from "status": an empty
                                         // library and a search with no matches
@@ -1657,6 +1692,7 @@ impl Component for AppModel {
                 NowPlayingOutput::Previous => AppMsg::Previous,
                 NowPlayingOutput::Seek(ms) => AppMsg::Seek(ms),
                 NowPlayingOutput::SetVolume(v) => AppMsg::SetVolume(v),
+                NowPlayingOutput::SetPlaybackRate(rate) => AppMsg::SetPlaybackRate(rate),
                 NowPlayingOutput::SetShuffle(on) => AppMsg::SetShuffle(on),
                 NowPlayingOutput::SetRepeat(mode) => AppMsg::SetRepeat(mode),
                 NowPlayingOutput::CycleSegmentLoop => AppMsg::CycleSegmentLoop,
@@ -1761,6 +1797,12 @@ impl Component for AppModel {
         let explore_view = ExploreView::new(tile_art_request.clone(), move |action| {
             explore_sender.input(AppMsg::ExploreAction(action));
         });
+        let search_sender = sender.clone();
+        let search_landing = SearchLanding::new(tile_art_request.clone(), move |action| {
+            search_sender.input(AppMsg::SearchLandingAction(action));
+        });
+        let search_history = crate::search_history::History::load();
+        search_landing.set_history(search_history.entries());
         let preferences_sender = sender.clone();
         let lyrics_seek_sender = sender.clone();
         let lyrics_timing_sender = sender.clone();
@@ -1798,6 +1840,11 @@ impl Component for AppModel {
             loading_explore: false,
             tried_explore: false,
             explore_generation: 0,
+            search_landing,
+            search_history,
+            loading_search_trending: false,
+            tried_search_trending: false,
+            search_trending_generation: 0,
             lyrics_view,
             jamkin_mode,
             discord_presence,
@@ -1995,6 +2042,7 @@ impl Component for AppModel {
         let artist_grid = &model.artist_grid.view;
         let playlist_grid = &model.playlist_grid.view;
         let explore_content = model.explore_view.widget();
+        let search_landing_content = model.search_landing.widget();
         let lyrics_content = model.lyrics_view.widget();
         let player_sheet_content = model.player_view.widget();
         // Cloned rather than borrowed from the model: `view_output!` needs it
@@ -2270,6 +2318,13 @@ impl AppModel {
                 self.mpris.seeked(position_ms);
             }
             AppMsg::SetVolume(volume) => self.set_volume(volume),
+            AppMsg::SetPlaybackRate(rate) => {
+                let Some(rate) = crate::playback_rate::normalize(rate) else {
+                    tracing::warn!("refusing unsupported playback rate");
+                    return;
+                };
+                self.send(Command::SetPlaybackRate { rate });
+            }
             // **The panel is raised here rather than inside `set_volume`.**
             // That returns early when the value has not moved, so at 0.0 and
             // 1.0 it does nothing — and a shortcut that shows nothing at the
@@ -2491,13 +2546,27 @@ impl AppModel {
                         // Debounce. Only the newest timer commits — the same
                         // generation trick the seek bar uses, and for the same
                         // reason: removing a fired glib source aborts.
-                        let sender = sender.clone();
+                        let search_sender = sender.clone();
+                        let history_sender = sender.clone();
                         gtk::glib::timeout_add_local_once(
                             std::time::Duration::from_millis(SEARCH_DEBOUNCE_MS),
-                            move || sender.input(AppMsg::RunCatalogSearch(generation)),
+                            move || search_sender.input(AppMsg::RunCatalogSearch(generation)),
+                        );
+                        gtk::glib::timeout_add_local_once(
+                            std::time::Duration::from_millis(SEARCH_HISTORY_COMMIT_MS),
+                            move || history_sender.input(AppMsg::CommitSearchAfter(generation)),
                         );
                     }
                 }
+            }
+            AppMsg::CommitSearch => self.record_current_search(),
+            AppMsg::CommitSearchAfter(generation) => {
+                if generation == self.search_gen {
+                    self.record_current_search();
+                }
+            }
+            AppMsg::SearchLandingAction(action) => {
+                self.handle_search_landing(action, &sender, root);
             }
             AppMsg::RunCatalogSearch(generation) => {
                 if generation != self.search_gen {
@@ -2700,7 +2769,7 @@ impl AppModel {
                 sender.oneshot_command(async move {
                     CommandMsg::PlaylistWritten {
                         generation,
-                        created: true,
+                        append: None,
                         result: client
                             .create_playlist(name, description, Vec::new())
                             .await
@@ -2720,11 +2789,42 @@ impl AppModel {
                     return;
                 };
                 let generation = self.account_generation;
+                self.toast("Checking playlist…");
+                sender.oneshot_command(async move {
+                    let target_playlist = playlist_id.clone();
+                    let target_song = catalog_id.clone();
+                    let result = client
+                        .library_playlist(&playlist_id)
+                        .await
+                        .map(|(_, tracks)| {
+                            tracks.iter().any(|track| {
+                                track.catalog_id.as_deref() == Some(catalog_id.as_str())
+                            })
+                        })
+                        .map_err(|error| format!("{error:#}"));
+                    CommandMsg::PlaylistDuplicateChecked {
+                        generation,
+                        playlist_id: target_playlist,
+                        catalog_id: target_song,
+                        result,
+                    }
+                });
+            }
+            AppMsg::AppendTrackToPlaylist {
+                playlist_id,
+                catalog_id,
+            } => {
+                let Some(client) = self.client() else {
+                    self.toast("Not connected yet");
+                    return;
+                };
+                let generation = self.account_generation;
                 self.toast("Adding song to playlist…");
                 sender.oneshot_command(async move {
+                    let append = (playlist_id.clone(), catalog_id.clone());
                     CommandMsg::PlaylistWritten {
                         generation,
-                        created: false,
+                        append: Some(append),
                         result: client
                             .add_playlist_tracks(playlist_id, vec![catalog_id])
                             .await
@@ -2752,6 +2852,10 @@ impl AppModel {
             }
             AppMsg::SetNotifyTrackChange(on) => {
                 self.settings.notify_track_change = on;
+                self.settings.save();
+            }
+            AppMsg::SetSearchHistoryEnabled(on) => {
+                self.settings.search_history_enabled = on;
                 self.settings.save();
             }
             AppMsg::SetLyricsEnabled(on) => {
@@ -2883,6 +2987,7 @@ impl AppModel {
                 }
             }
             AppMsg::LibraryActivated(position) => {
+                self.record_current_search();
                 // Catalog results mix songs with albums, artists and playlists.
                 // A song plays; the rest are doors, and clicking one walks
                 // through it. Resolved against the list as it is right now,
@@ -3719,6 +3824,9 @@ impl AppModel {
                 }
             }
             CommandMsg::Explore { generation, result } => self.finish_explore(generation, result),
+            CommandMsg::SearchTrending { generation, result } => {
+                self.finish_search_trending(generation, result);
+            }
             CommandMsg::Lyrics {
                 generation,
                 query,
@@ -3839,12 +3947,13 @@ impl AppModel {
             }
             CommandMsg::PlaylistWritten {
                 generation,
-                created,
+                append,
                 result,
             } => {
                 if generation != self.account_generation {
                     return;
                 }
+                let created = append.is_none();
                 match result {
                     Ok(()) => {
                         self.toast(if created {
@@ -3859,10 +3968,36 @@ impl AppModel {
                         self.tried_playlists = false;
                         self.built_playlists = None;
                         self.load_playlists(&sender);
+                        if let Some((playlist_id, catalog_id)) = append.as_ref() {
+                            self.refresh_library_playlist_pages(playlist_id, catalog_id, &sender);
+                        }
                     }
                     Err(error) => {
                         tracing::warn!(created, "playlist write failed");
                         self.toast(&format!("Playlist change failed: {error}"));
+                    }
+                }
+            }
+            CommandMsg::PlaylistDuplicateChecked {
+                generation,
+                playlist_id,
+                catalog_id,
+                result,
+            } => {
+                if generation != self.account_generation {
+                    return;
+                }
+                match result {
+                    Ok(true) => {
+                        self.confirm_duplicate_playlist(playlist_id, catalog_id, &sender, root)
+                    }
+                    Ok(false) => sender.input(AppMsg::AppendTrackToPlaylist {
+                        playlist_id,
+                        catalog_id,
+                    }),
+                    Err(error) => {
+                        tracing::warn!("playlist duplicate check failed");
+                        self.toast(&format!("Playlist could not be checked: {error}"));
                     }
                 }
             }
@@ -3984,6 +4119,7 @@ impl AppModel {
                     }
                 }
                 painted += self.explore_view.paint(&key, &texture);
+                painted += self.search_landing.paint(&key, &texture);
                 for page in &self.pages {
                     painted += page.paint_artist_art(&key, &texture);
                 }

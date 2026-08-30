@@ -333,6 +333,7 @@ mod tests {
             mosaic_artwork: covers,
             share_url: None,
             library: true,
+            can_edit: true,
         }
     }
 

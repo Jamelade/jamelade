@@ -341,7 +341,12 @@ pub fn set_accent(accent: Accent, companion: Companion) {
                      312deg,
                      alpha(var(--glass-secondary-color), 0.085),
                      transparent 46%
-             );
+                 );
+         }}
+         /* Secondary copy stays quiet without fading into pale themed
+            surfaces. Artwork mode has its own adaptive rule below. */
+         .jamelade-window .dim-label {{
+             color: alpha(@window_fg_color, 0.73);
          }}
          .jamelade-window headerbar {{
              background-color: alpha(var(--jamelade-headerbar-color), 0.78);
@@ -507,7 +512,7 @@ pub fn set_accent(accent: Accent, companion: Companion) {
          }}
          .np-bar .dim-label,
          .np-bar:backdrop .dim-label {{
-             color: alpha(@window_fg_color, 0.68);
+             color: alpha(@window_fg_color, 0.73);
          }}
          .np-row {{
              margin: 7px;
@@ -546,9 +551,9 @@ pub fn set_accent(accent: Accent, companion: Companion) {
                  0 12px 30px alpha(#000000, 0.18);
          }}
 
-         /* The bar's progress line. Thin, square, and edge to edge — it reads
-            as the bar filling up rather than as a widget sitting on it, which
-            is the whole reason it stopped being a scale.
+         /* The bar's progress line. Thin and inset, with enough unplayed track
+            to read as intentional playback progress instead of a loading
+            indicator attached to the window edge.
 
             GTK draws a progressbar as trough > progress, and Adwaita gives
             both a radius and the trough a margin that would inset the line
@@ -557,11 +562,61 @@ pub fn set_accent(accent: Accent, companion: Companion) {
          .np-progress > trough,
          .np-progress > trough > progress {{
              min-height: 3px;
-             border-radius: 0;
-             margin: 0;
+             border-radius: 9999px;
              padding: 0;
          }}
-         .np-progress > trough {{ background-color: alpha(currentColor, 0.13); }}
+         .np-progress {{ margin: 0 18px 4px; }}
+         .np-progress > trough {{ background-color: alpha(currentColor, 0.20); }}
+
+         /* Search and filter are one family even though HeaderBar allocates
+            them separately. Matching surfaces keep the filter from floating. */
+         .jamelade-search-entry,
+         .jamelade-search-filter > button {{
+             background-color: alpha(@window_fg_color, 0.055);
+             box-shadow: inset 0 0 0 1px alpha(currentColor, 0.075);
+         }}
+
+         /* Preferences retain Adwaita's native rows while making their three
+            interaction types faster to scan. */
+         .jamelade-preferences headerbar windowtitle > label.title {{
+             font-size: 1.08em;
+             font-weight: 700;
+         }}
+         .jamelade-preferences .dim-label {{
+             color: alpha(@window_fg_color, 0.74);
+         }}
+         .jamelade-preferences .preferences-surface-group .boxed-list {{
+             background-color: alpha(@window_bg_color, 0.92);
+             box-shadow:
+                 inset 0 0 0 1px alpha(currentColor, 0.08),
+                 0 8px 22px alpha(#000000, 0.075);
+         }}
+         .preferences-value-row {{ min-height: 50px; }}
+         .preferences-toggle-row {{
+             min-height: 56px;
+             padding-top: 2px;
+             padding-bottom: 2px;
+         }}
+         .preferences-slider-row {{
+             min-height: 62px;
+             padding-top: 4px;
+             padding-bottom: 4px;
+         }}
+         .preferences-slider-row scale {{ margin-left: 12px; }}
+
+         /* Playlist-write sheets belong to the selected Jamelade theme, not
+            the host's stock light dialog palette. Keep their one choice row
+            consistent with Preferences without adding another glass layer. */
+         .jamelade-themed-dialog,
+         .jamelade-themed-dialog > contents {{
+             color: @window_fg_color;
+             background-color: @window_bg_color;
+             background-image: none;
+         }}
+         .jamelade-themed-dialog .preferences-surface-group .boxed-list {{
+             background-color: alpha(@window_bg_color, 0.92);
+             box-shadow: inset 0 0 0 1px alpha(currentColor, 0.08);
+         }}
 
          {COVER_LAYOUT}
 
@@ -584,12 +639,105 @@ pub fn set_accent(accent: Accent, companion: Companion) {
          /* Same reason. A GridView draws its own background, so insetting it
             with a margin shows a band of the window around every grid. */
          .tile-grid {{
-             padding: 12px;
+             padding: 14px;
+             padding-bottom: 26px;
              /* A GridView paints the `view` background, which is a shade
                 darker than the window. The results list next door carries
                 `navigation-sidebar` and is transparent, so the two sections
                 did not match. */
              background: none;
+         }}
+         .media-tile {{
+             border-radius: 15px;
+             transition: 150ms ease;
+         }}
+         .media-tile:hover,
+         .tile-grid > child:hover .media-tile {{
+             background-color: alpha(@window_bg_color, 0.16);
+             box-shadow:
+                 inset 0 1px alpha(#ffffff, 0.15),
+                 inset 0 0 0 1px alpha(currentColor, 0.07),
+                 0 7px 18px alpha(#000000, 0.07);
+         }}
+         .tile-grid > child:focus-visible .media-tile {{
+             box-shadow: inset 0 0 0 2px alpha(var(--accent-color), 0.42);
+         }}
+
+         /* Empty Search is a dashboard, not an error page. Its pills and cards
+            are intentionally flatter than the main player and preferences so
+            glass still describes hierarchy rather than coating everything. */
+         .search-landing flowboxchild {{
+             padding: 0;
+             background: none;
+         }}
+         .search-clear-history {{
+             color: var(--accent-color);
+             font-weight: 700;
+         }}
+         .search-history-pill {{
+             min-height: 44px;
+             padding: 0 4px;
+             border-radius: 9999px;
+             background-color: alpha(@window_fg_color, 0.055);
+             box-shadow: inset 0 0 0 1px alpha(currentColor, 0.055);
+             transition: 140ms ease;
+         }}
+         .search-history-pill:hover {{
+             background-color: alpha(var(--glass-primary-color), 0.12);
+             box-shadow: inset 0 0 0 1px alpha(currentColor, 0.085);
+         }}
+         .search-history-open {{ padding-left: 10px; }}
+         .search-category-card {{
+             padding: 14px;
+             border-radius: 18px;
+             color: #ffffff;
+             box-shadow:
+                 inset 0 1px alpha(#ffffff, 0.20),
+                 inset 0 0 0 1px alpha(#ffffff, 0.10),
+                 0 8px 20px alpha(#000000, 0.12);
+             transition: 150ms ease;
+         }}
+         .search-category-card:hover {{
+             box-shadow:
+                 inset 0 1px alpha(#ffffff, 0.25),
+                 inset 0 0 0 1px alpha(#ffffff, 0.15),
+                 0 11px 25px alpha(#000000, 0.16);
+         }}
+         .search-category-title {{
+             color: #ffffff;
+             text-shadow: 0 1px 4px alpha(#000000, 0.72);
+         }}
+         .category-new {{
+             background-image: linear-gradient(135deg, #c77892, #698ea0);
+         }}
+         .category-hiphop {{
+             background-image: linear-gradient(135deg, #2c1d26, #8b4b2f);
+         }}
+         .category-indie {{
+             background-image: linear-gradient(135deg, #66727b, #28353f);
+         }}
+         .category-electronic {{
+             background-image: linear-gradient(135deg, #1742a7, #0ba1d2);
+         }}
+         .category-chill {{
+             background-image: linear-gradient(135deg, #ad718b, #df9fba);
+         }}
+         .search-trending-card {{
+             min-width: 210px;
+             padding: 9px;
+             border-radius: 16px;
+             background-color: alpha(@window_bg_color, 0.30);
+             box-shadow:
+                 inset 0 1px alpha(#ffffff, 0.14),
+                 inset 0 0 0 1px alpha(currentColor, 0.065);
+             transition: 140ms ease;
+         }}
+         .search-trending-card:hover {{
+             background-color: alpha(var(--glass-primary-color), 0.13);
+             box-shadow:
+                 inset 0 1px alpha(#ffffff, 0.18),
+                 inset 0 0 0 1px alpha(currentColor, 0.09),
+                 0 7px 18px alpha(#000000, 0.08);
          }}
 
          /* Explore is still a native widget hierarchy; these rules provide
@@ -1078,7 +1226,7 @@ fn adaptive_text_css(palette: AlbumPalette, blend: f32) -> String {
              -gtk-icon-shadow: none;
          }}
          .art-foreground .jam-glass-sidebar .dim-label {{
-             color: alpha(@window_fg_color, 0.68);
+             color: alpha(@window_fg_color, 0.73);
          }}",
         drop_alpha * blend,
         halo_alpha * blend,

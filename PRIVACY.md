@@ -55,6 +55,11 @@ Apple applies its own privacy policy and service terms to this traffic.
   supplied by the desktop keyring portal.
 - **Global shortcuts:** off by default and local only. The desktop portal owns
   the chosen bindings; Jamelade receives only one of four fixed action names.
+- **Search history:** on by default and local only. At most 16 normalized
+  catalogue queries are kept in a private XDG state file. Disabling recording
+  leaves existing entries untouched; removing a pill or choosing Clear History
+  updates only that file. Trending Now uses Apple's ordinary storefront chart,
+  not a third-party service or scraped query feed.
 - **Desktop Jamkin, themes, and collages:** local only. They reuse already
   loaded playback state and cached artwork.
 - **Launcher-icon helper:** optional and installed separately for the current
@@ -69,7 +74,8 @@ in-memory lyric cache when lyric consent changes.
 
 Jamelade stores preferences, bounded artwork and playlist caches, the encrypted
 Apple-cookie vault, the separately encrypted last-login email, and Chromium's
-downloaded Widevine component in its own XDG directories. Per-song lyric timing
+downloaded Widevine component in its own XDG directories. Search history is a
+bounded user-only file under XDG state. Per-song lyric timing
 stores only numeric catalogue IDs and offsets. Playlist export writes a
 user-chosen file containing visible metadata and public links. It requests no
 broad home-directory access in the Flatpak. The AppImage is a native executable
