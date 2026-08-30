@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 3.0.0 — 2026-08-30
+
 - Added a compact 0.5×–2× playback-speed slider in 0.1× steps behind the
   far-right rate button while preserving the centred play button and clocks.
 - Refined visual hierarchy with stronger secondary-text contrast, distinct
@@ -16,7 +18,7 @@
 - Replaced the empty Search prompt with local recent-search pills, per-entry and
   clear-all removal, five category shortcuts, and a storefront Trending Now row
   backed by Apple's documented chart. Recording is optional and disabling it
-  preserves existing history.
+  preserves existing history; queries are capped before storage or network use.
 - Increased the colour presence of the Blossom, Tidepool, and Vermilion named
   themes while retaining their existing light-surface contrast.
 - Added `Hide JamBun`, `Hide JamPam`, or `Hide JamJoe` to the active Desktop
@@ -30,6 +32,8 @@
   only during a visible login in validated Apple frames. It waits for a
   complete, stable address instead of persisting a typing prefix; the auth
   preload remains empty and passwords stay outside Jamelade's storage and IPC.
+- Refreshed the public JamBun and JamPam animation previews from the repaired
+  frame sets shipped by the application.
 
 ## 2.1.0 — 2026-08-25
 

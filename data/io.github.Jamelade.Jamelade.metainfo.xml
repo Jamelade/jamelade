@@ -44,6 +44,11 @@
     <internet>always</internet>
   </requires>
   <releases>
+    <release version="3.0.0" date="2026-08-30">
+      <description>
+        <p>Jamelade 3.0 adds a useful Search landing page with private local history, playback-speed control, more reliable playlist additions with duplicate confirmation, stronger session restoration, richer theme polish, and refreshed Jamkin previews.</p>
+      </description>
+    </release>
     <release version="2.1.0" date="2026-08-25">
       <description>
         <p>Jamelade 2.1 refines fully transparent album-art presentation with softer adaptive text contrast and clean selected-theme sidebar typography.</p>

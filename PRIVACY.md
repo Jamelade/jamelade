@@ -21,7 +21,7 @@ OS-keyring-encrypted local vault. If a supported keyring is unavailable, the
 session is memory-only. Apple cookies and MusicKit tokens remain inside the
 browser boundary; the native process receives only bounded response data.
 
-When an Apple login is required, Jamelade can remember the last submitted Apple
+When an Apple login is required, Jamelade can remember the last entered Apple
 ID email and prefill it on the next HTTPS Apple login page. The address stays in
 a separate OS-keyring-encrypted, user-only file and is sent only to Apple's
 login page when used. Jamelade does not read, store, or bridge the password
@@ -82,8 +82,9 @@ broad home-directory access in the Flatpak. The AppImage is a native executable
 and therefore inherits the invoking user's normal filesystem permissions,
 although Jamelade's code continues to use only its documented XDG locations.
 Sign out removes Jamelade's saved Apple session but retains the encrypted email
-for the next login. Deleting application data removes both. Uninstalling without
-deleting app data may leave local settings and caches behind.
+for the next login and local search history until it is cleared from Search.
+Deleting application data removes all three. Uninstalling without deleting app
+data may leave local settings and caches behind.
 
 ## Issue reports
 

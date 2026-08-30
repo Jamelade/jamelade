@@ -87,6 +87,7 @@ AppImage follows the normal XDG config and cache roots instead.
 | Last login email | Separate bounded keyring-encrypted file, mode 0600; the Apple password is never inspected or stored |
 | Apple tokens | Remain inside Apple/MusicKit; Rust never stores them |
 | Settings and queue | Bounded user-only files |
+| Search history | Up to 16 normalized queries in a bounded user-only XDG state file; removable individually or with Clear History |
 | Library metadata and artwork | App-private bounded caches; artwork filenames do not contain titles |
 | Lyrics | Bounded process-memory cache only |
 | Lyric offsets | Numeric Apple catalogue ID and bounded timing offset only |
@@ -95,8 +96,9 @@ AppImage follows the normal XDG config and cache roots instead.
 
 Explicit sign-out stops vault writes, clears cookies/web storage and
 account-derived caches, removes the session vault, and clears Discord activity.
-The separately encrypted email remains available to prefill a later Apple login
-until the user deletes Jamelade's application data.
+The separately encrypted email remains available to prefill a later Apple login.
+Device-local search history also remains until it is cleared from Search or the
+user deletes Jamelade's application data.
 
 ## Logging and updates
 

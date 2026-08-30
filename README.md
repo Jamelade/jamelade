@@ -161,7 +161,7 @@ if decryption still fails, Jamelade preserves the encrypted file and disables
 writes instead of replacing it with anonymous cookies. Optional integrations
 never receive Apple credentials.
 
-Jamelade can also remember the last Apple ID email submitted in Apple's login
+Jamelade can also remember the last Apple ID email entered in Apple's login
 window. It is stored separately, encrypted by the same desktop keyring, and
 prefilled by a bounded main-process helper only into fixed email/username-like
 fields in a validated HTTPS Apple frame. The helper waits for a complete,
@@ -208,15 +208,15 @@ recommended** because it adds an outer application sandbox:
 
 ```bash
 sha256sum --ignore-missing -c SHA256SUMS
-flatpak install --user ./Jamelade-2.1.0-x86_64.flatpak
+flatpak install --user ./Jamelade-3.0.0-x86_64.flatpak
 ```
 
 The secondary AppImage targets Ubuntu 24.04 or newer and contemporary Fedora:
 
 ```bash
 sha256sum --ignore-missing -c SHA256SUMS
-chmod +x Jamelade-2.1.0-x86_64.AppImage
-./Jamelade-2.1.0-x86_64.AppImage
+chmod +x Jamelade-3.0.0-x86_64.AppImage
+./Jamelade-3.0.0-x86_64.AppImage
 ```
 
 The AppImage keeps Chromium's renderer sandbox enabled but, like any native

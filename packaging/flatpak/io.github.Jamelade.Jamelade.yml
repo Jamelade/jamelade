@@ -101,7 +101,7 @@ modules:
         # keeps checkout time and flatpak-builder's temporary directory out of
         # otherwise identical release binaries. Update deliberately for the
         # next release rather than inheriting the builder's wall clock.
-        SOURCE_DATE_EPOCH: '1787616000'
+        SOURCE_DATE_EPOCH: '1788048000'
         CARGO_INCREMENTAL: '0'
         RUSTFLAGS: '--remap-path-prefix=/run/build/jamelade=/usr/src/jamelade'
         # Public Rich Presence identifier only. Discord client secrets and

@@ -85,6 +85,17 @@ const TICK_MS: u32 = 500;
 /// The library filter is local and runs on every keystroke; the catalog is a
 /// network request, and firing one per character would be both slow and rude.
 const SEARCH_DEBOUNCE_MS: u64 = 350;
+/// One bounded query crosses the native/Apple API boundary and may also enter
+/// private local history. Enforce the ceiling in the reducer so entry,
+/// programmatic, and type-ahead paths all share the same final boundary.
+const MAX_SEARCH_CHARS: usize = 160;
+
+fn bounded_search(query: String) -> (String, bool) {
+    let mut chars = query.chars();
+    let bounded = chars.by_ref().take(MAX_SEARCH_CHARS).collect();
+    (bounded, chars.next().is_some())
+}
+
 /// A query becomes history only after it has stayed unchanged long enough to
 /// be intentional. Enter and result activation still commit immediately.
 const SEARCH_HISTORY_COMMIT_MS: u64 = 1_500;
@@ -2512,6 +2523,12 @@ impl AppModel {
                 if !self.view.searchable() {
                     return;
                 }
+                let (query, truncated) = bounded_search(query);
+                if truncated {
+                    // Put the bounded value back into an entry whose caller
+                    // supplied more; the reducer remains the final boundary.
+                    self.sync_entry = true;
+                }
                 if query == self.query() {
                     return;
                 }
@@ -4556,5 +4573,16 @@ mod tests {
         let catalog = [&a];
         let shown: Vec<_> = catalog.iter().collect();
         assert_eq!(shown.len(), 1);
+    }
+
+    #[test]
+    fn search_queries_are_bounded_by_characters_before_network_use() {
+        let (ordinary, truncated) = bounded_search("JamJoe".into());
+        assert_eq!(ordinary, "JamJoe");
+        assert!(!truncated);
+
+        let (long, truncated) = bounded_search("花".repeat(MAX_SEARCH_CHARS + 20));
+        assert_eq!(long.chars().count(), MAX_SEARCH_CHARS);
+        assert!(truncated);
     }
 }
